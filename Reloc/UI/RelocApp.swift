@@ -96,7 +96,9 @@ private struct CellularGuidanceCard: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
-            if viewModel.cellularGuidance == .turnOffData {
+            if viewModel.cellularGuidance == .turnOffData
+                || viewModel.cellularGuidance == .readyToStart
+                || viewModel.cellularGuidance == .discovering {
                 Text(viewModel.cellularDiscoveryStatus)
                     .font(.caption)
                     .foregroundStyle(RelocTheme.accent)
@@ -105,19 +107,39 @@ private struct CellularGuidanceCard: View {
 
             HStack(spacing: 12) {
                 if viewModel.cellularGuidance == .turnBackOnData {
-                    Button("知道了") {
+                    // Step 3 — done.
+                    Button("完成") {
                         viewModel.dismissCellularGuidance()
                     }
                     .buttonStyle(.borderedProminent)
                 } else if viewModel.cellularGuidance == .turnOffData {
+                    // Step 1 — user turns data off, then advances to step 2.
                     Button("取消") {
                         viewModel.stopAndRestore()
                     }
                     .buttonStyle(.bordered)
-                    Button("已关闭数据，继续") {
+                    Button("已关闭数据，下一步") {
                         viewModel.userDidTurnOffMobileData()
                     }
                     .buttonStyle(.borderedProminent)
+                } else if viewModel.cellularGuidance == .readyToStart {
+                    // Step 2 — explicit Start, matching the original app.
+                    Button("取消") {
+                        viewModel.stopAndRestore()
+                    }
+                    .buttonStyle(.bordered)
+                    Button("开始定位") {
+                        viewModel.confirmCellularStart()
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else if viewModel.cellularGuidance == .discovering {
+                    // Step 2 in progress — discovery loop running.
+                    Button("取消") {
+                        viewModel.stopAndRestore()
+                    }
+                    .buttonStyle(.bordered)
+                    ProgressView()
+                        .frame(width: 24, height: 24)
                 } else {
                     Button("取消") {
                         viewModel.stopAndRestore()
@@ -137,8 +159,10 @@ private struct CellularGuidanceCard: View {
 
     private var title: String {
         switch viewModel.cellularGuidance {
-        case .turnOffData: return "蜂窝网络定位设置"
-        case .turnBackOnData: return "定位已建立"
+        case .turnOffData: return "第 1 步 / 共 3 步：关闭蜂窝数据"
+        case .readyToStart: return "第 2 步 / 共 3 步：开始定位"
+        case .discovering: return "第 2 步 / 共 3 步：正在定位"
+        case .turnBackOnData: return "第 3 步 / 共 3 步：恢复蜂窝数据"
         case .connectionHelp: return "连接未成功"
         case .none: return ""
         }
@@ -147,12 +171,16 @@ private struct CellularGuidanceCard: View {
     private var message: String {
         switch viewModel.cellularGuidance {
         case .turnOffData:
-            return "请保持外部代理的 10.7.0.1 隧道连接，然后临时关闭这台 iPhone 的蜂窝数据，再返回 Reloc。App 会自动发现设备并开始定位；成功后会提示你恢复数据。"
+            return "请保持外部代理的 10.7.0.1 隧道连接，先临时关闭这台 iPhone 的蜂窝数据（控制中心 → 关掉蜂窝数据）。关闭后回来点「下一步」。"
+        case .readyToStart:
+            return "蜂窝数据已关闭。现在点下面的「开始定位」按钮，App 会发现设备并建立定位模拟。"
+        case .discovering:
+            return "正在发现这台 iPhone 的配对服务，请稍候。发现成功后会提示你恢复蜂窝数据。"
         case .turnBackOnData:
-            return "定位模拟已开始。现在可以重新打开蜂窝数据，模拟会继续通过 5G 运行。"
+            return "定位模拟已建立。现在可以重新打开蜂窝数据，模拟会继续通过 5G 运行。"
         case .connectionHelp:
             return viewModel.cellularDiscoveryStatus.isEmpty
-                ? "请确认代理隧道已连接并重试。"
+                ? "请确认代理隧道已连接、蜂窝数据已关闭，然后重试。"
                 : viewModel.cellularDiscoveryStatus
         case .none: return ""
         }
@@ -161,6 +189,8 @@ private struct CellularGuidanceCard: View {
     private var iconName: String {
         switch viewModel.cellularGuidance {
         case .turnOffData: return "antenna.radiowaves.left.and.right"
+        case .readyToStart: return "location.north.circle.fill"
+        case .discovering: return "antenna.radiowaves.left.and.right"
         case .turnBackOnData: return "checkmark.circle.fill"
         case .connectionHelp: return "exclamationmark.triangle.fill"
         case .none: return "questionmark"
