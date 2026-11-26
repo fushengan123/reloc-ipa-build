@@ -735,27 +735,6 @@ public final class RelocViewModel: ObservableObject {
         }
     }
 
-    /// `wp_location_session_cancel` only reaches the device while a session is
-    /// alive. If the running session already returned on its own, the iPhone can
-    /// be left holding the simulated coordinate and a later stop has nothing to
-    /// cancel — which looks exactly like "停止并恢复 has no effect". In that case
-    /// open a throwaway session and cancel it, so the device receives the stop.
-    private func clearStraySimulation() {
-        guard locationMode == .system,
-              systemSession == nil,
-              let data = lastSystemPairingData,
-              let service = lastSystemService else { return }
-        let cleanup = SystemLocationSession(
-            initialLocation: targetLocation,
-            onEvent: { _ in },
-            onSnapshot: { _ in }
-        )
-        cleanup.start(pairingData: data, service: service, initialLocation: targetLocation)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            cleanup.stop()
-        }
-    }
-
     /// Build and start the actual WrapPin native location session.
     private func launchSystemSession(pairingData: Data, service: RemotePairingServiceInfo) {
         // Exactly one system session may exist; otherwise a stale session keeps
@@ -909,13 +888,8 @@ public final class RelocViewModel: ObservableObject {
         cellularGuidance = .none
         cellularDiscoveryStatus = ""
         session?.stop()
-        let didCancel = systemSession?.stop() ?? false
+        systemSession?.stop()
         systemSession = nil
-        // Only fall back to the rebuild-and-cancel trick when the live handle
-        // was already gone; otherwise the device has just been told to stop.
-        if !didCancel {
-            clearStraySimulation()
-        }
         keepAlive.stop()
         coreLocation.stop()
         store.saveInterruptedSession(nil)
