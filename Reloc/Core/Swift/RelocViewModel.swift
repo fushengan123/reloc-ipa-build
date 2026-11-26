@@ -741,7 +741,8 @@ public final class RelocViewModel: ObservableObject {
     /// cancel — which looks exactly like "停止并恢复 has no effect". In that case
     /// open a throwaway session and cancel it, so the device receives the stop.
     private func clearStraySimulation() {
-        guard systemSession == nil,
+        guard locationMode == .system,
+              systemSession == nil,
               let data = lastSystemPairingData,
               let service = lastSystemService else { return }
         let cleanup = SystemLocationSession(
@@ -807,6 +808,10 @@ public final class RelocViewModel: ObservableObject {
                     self.stopJitterTimer()
                     self.keepAlive.stop()
                     self.coreLocation.stop()
+                    // Try a cancel before dropping the handle: if the FFI session
+                    // is still alive this is the only chance to tell the device
+                    // to stop simulating.
+                    _ = self.systemSession?.stop()
                     self.systemSession = nil
                     // The card must never branch into a second message: as long as
                     // the location is not established the only card is
@@ -904,9 +909,13 @@ public final class RelocViewModel: ObservableObject {
         cellularGuidance = .none
         cellularDiscoveryStatus = ""
         session?.stop()
-        systemSession?.stop()
+        let didCancel = systemSession?.stop() ?? false
         systemSession = nil
-        clearStraySimulation()
+        // Only fall back to the rebuild-and-cancel trick when the live handle
+        // was already gone; otherwise the device has just been told to stop.
+        if !didCancel {
+            clearStraySimulation()
+        }
         keepAlive.stop()
         coreLocation.stop()
         store.saveInterruptedSession(nil)
