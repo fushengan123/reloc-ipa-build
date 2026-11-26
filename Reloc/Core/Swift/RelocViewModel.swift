@@ -526,6 +526,9 @@ public final class RelocViewModel: ObservableObject {
         coreLocation.stop()
         store.saveInterruptedSession(nil)
         interruptedSession = nil
+        // 停止后引导到系统「定位服务」页：重新关闭再打开定位服务，
+        // 系统会清除注入的位置并切回本机真实 GPS。
+        requestOpenLocationSettings = true
     }
 
     // MARK: - Pairing & Places Management

@@ -56,12 +56,16 @@ struct ContentView: View {
     }
 }
 
-/// Opens the system Location Services screen after a send-session starts.
-/// The `prefs:` deep links are not public API; the public app-settings URL is the fallback.
+/// Opens the system Location Services screen. This is needed both after a send
+/// session starts and after it stops: toggling Location Services off/on is what
+/// clears the injected coordinates and restores the device's real location.
+/// The `prefs:` deep links are not public API; the public app-settings URL is the last fallback.
 private enum LocationSettingsOpener {
     static func open() {
         var candidates: [URL] = []
+        // 目标：系统「设置 → 隐私与安全性 → 定位服务」总开关页面
         if let system = URL(string: "prefs:root=LOCATION_SERVICES") { candidates.append(system) }
+        if let altSystem = URL(string: "App-prefs:root=LOCATION_SERVICES") { candidates.append(altSystem) }
         if let privacy = URL(string: "prefs:root=Privacy&path=LOCATION") { candidates.append(privacy) }
         if let appSettings = URL(string: UIApplication.openSettingsURLString) { candidates.append(appSettings) }
         attempt(candidates, at: 0)

@@ -100,6 +100,14 @@ struct ConfigurationView: View {
                         Label("导入已有配对文件", systemImage: "square.and.arrow.down")
                     }
                     .disabled(pairing.isRunning || viewModel.isVerifyingConnection || viewModel.snapshot.isRunning)
+                    .fileImporter(
+                        isPresented: $showImporter,
+                        allowedContentTypes: [.data, .propertyList, .xml, .item],
+                        allowsMultipleSelection: false
+                    ) { result in
+                        guard case .success(let urls) = result, let url = urls.first else { return }
+                        viewModel.importPairingFile(url: url)
+                    }
 
                     Button {
                         viewModel.importPairingText(UIPasteboard.general.string ?? "")
@@ -195,6 +203,20 @@ struct ConfigurationView: View {
                         Label("导入 MFi 凭据（同时选两个文件）", systemImage: "square.and.arrow.down.on.square")
                     }
                     .disabled(viewModel.snapshot.isRunning)
+                    .fileImporter(
+                        isPresented: $showMFiImporter,
+                        allowedContentTypes: [.data, .item],
+                        allowsMultipleSelection: true
+                    ) { result in
+                        guard case .success(let urls) = result else { return }
+                        let cert = urls.first { $0.pathExtension.lowercased() == "p7b" }
+                        let key = urls.first { $0.pathExtension.lowercased() == "pk8" }
+                        guard let cert, let key else {
+                            viewModel.alertMessage = "请同时选择 certificate.p7b 和 identity.pk8 两个文件。"
+                            return
+                        }
+                        viewModel.importMFiCredentials(certificateURL: cert, privateKeyURL: key)
+                    }
                 } header: {
                     Text("配件认证")
                 } footer: {
@@ -289,28 +311,6 @@ struct ConfigurationView: View {
                         await viewModel.verifyConnectionIfNeeded()
                     }
                 }
-            }
-            .fileImporter(
-                isPresented: $showImporter,
-                allowedContentTypes: [.data, .propertyList, .xml, .item],
-                allowsMultipleSelection: false
-            ) { result in
-                guard case .success(let urls) = result, let url = urls.first else { return }
-                viewModel.importPairingFile(url: url)
-            }
-            .fileImporter(
-                isPresented: $showMFiImporter,
-                allowedContentTypes: [.data, .item],
-                allowsMultipleSelection: true
-            ) { result in
-                guard case .success(let urls) = result else { return }
-                let cert = urls.first { $0.pathExtension.lowercased() == "p7b" }
-                let key = urls.first { $0.pathExtension.lowercased() == "pk8" }
-                guard let cert, let key else {
-                    viewModel.alertMessage = "请同时选择 certificate.p7b 和 identity.pk8 两个文件。"
-                    return
-                }
-                viewModel.importMFiCredentials(certificateURL: cert, privateKeyURL: key)
             }
         }
     }
