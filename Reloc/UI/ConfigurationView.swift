@@ -176,7 +176,11 @@ struct ConfigurationView: View {
                 } header: {
                     stepSectionHeader(number: "03", title: "连接验证")
                 } footer: {
-                    Text("自动发现 Remote Pairing 服务并用配对记录验证广播身份，最终通过设备服务确认连接可用。")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("自动发现 Remote Pairing 服务并用配对记录验证广播身份，最终通过设备服务确认连接可用。")
+                        Text("需在 WiFi 下使用：设备端口靠局域网 Bonjour 发现，10.7.0.1 回环也由代理在 WiFi 下映射。蜂窝数据下通常无法连接；应用会复用上次在 WiFi 发现的端口，但不能保证连通。")
+                            .foregroundStyle(RelocTheme.amber)
+                    }
                 }
 
                 Section {

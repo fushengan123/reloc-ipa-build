@@ -385,7 +385,11 @@ public final class RelocViewModel: ObservableObject {
         }
 
         let currentHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
-        let currentRemotePort = remotePort
+        // Bonjour mDNS only traverses the local WiFi link. On cellular data the
+        // dynamic Remote Pairing port cannot be discovered, so reuse the last
+        // port that was successfully found on WiFi before falling back to the
+        // configured default.
+        let currentRemotePort = store.lastDiscoveredRemotePort ?? remotePort
         let currentLockdownPort = lockdownPort
 
         isVerifyingConnection = true
@@ -413,6 +417,7 @@ public final class RelocViewModel: ObservableObject {
                     self.store.deviceUDID = result.udid
                 }
                 self.discoveredDevicePort = result.port
+                self.store.lastDiscoveredRemotePort = result.port
                 self.connectionVerified = true
                 self.deviceConnectionStatus = "设备身份与回环连接已验证"
                 self.events.append(ProtocolEvent(
@@ -461,7 +466,7 @@ public final class RelocViewModel: ObservableObject {
 
         let config = SessionConfiguration(
             host: host.trimmingCharacters(in: .whitespacesAndNewlines),
-            remotePort: remotePort,
+            remotePort: store.lastDiscoveredRemotePort ?? remotePort,
             lockdownPort: lockdownPort,
             serviceName: serviceName.trimmingCharacters(in: .whitespacesAndNewlines),
             mode: mode,
@@ -554,6 +559,7 @@ public final class RelocViewModel: ObservableObject {
 
     public func removePairingFile() {
         store.removePairingFile()
+        store.lastDiscoveredRemotePort = nil
         reloadPairing()
         invalidateDeviceConnection()
     }

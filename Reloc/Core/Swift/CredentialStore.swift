@@ -164,6 +164,7 @@ public final class CredentialStore {
     private enum Keys {
         static let host = "reloc.host"
         static let remotePort = "reloc.remotePort"
+        static let lastDiscoveredPort = "reloc.lastDiscoveredPort"
         static let lockdownPort = "reloc.port"
         static let serviceName = "reloc.serviceName"
         static let deviceUDID = "reloc.deviceUDID"
@@ -220,6 +221,23 @@ public final class CredentialStore {
             return saved > 0 && saved <= 65535 ? UInt16(saved) : 49152
         }
         set { defaults.set(Int(newValue), forKey: Keys.remotePort) }
+    }
+
+    /// Last Remote Pairing port discovered over Bonjour. Bonjour mDNS only works on
+    /// the local WiFi link, so this cache lets a later session reuse the port when
+    /// the device cannot be discovered again (e.g. on cellular data).
+    public var lastDiscoveredRemotePort: UInt16? {
+        get {
+            let saved = defaults.integer(forKey: Keys.lastDiscoveredPort)
+            return saved > 0 && saved <= 65535 ? UInt16(saved) : nil
+        }
+        set {
+            if let newValue {
+                defaults.set(Int(newValue), forKey: Keys.lastDiscoveredPort)
+            } else {
+                defaults.removeObject(forKey: Keys.lastDiscoveredPort)
+            }
+        }
     }
 
     public var lockdownPort: UInt16 {
