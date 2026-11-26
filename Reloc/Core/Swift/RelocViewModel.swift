@@ -100,6 +100,8 @@ public final class RelocViewModel: ObservableObject {
     @Published public var snapshot = SessionSnapshot()
     @Published public var events: [ProtocolEvent] = []
     @Published public var alertMessage: String?
+    /// One-shot request from the start-flow to open the system Location Services settings screen.
+    @Published public var requestOpenLocationSettings = false
 
     private var savedPairing: SavedPairing?
     private var mfiSigner: RLMFiSigner?
@@ -478,6 +480,10 @@ public final class RelocViewModel: ObservableObject {
             discoveredRemotePort: discoveredDevicePort,
             mfiSigner: mfiSigner
         )
+
+        if case .send = mode {
+            requestOpenLocationSettings = true
+        }
     }
 
     public func stopAndRestore() {

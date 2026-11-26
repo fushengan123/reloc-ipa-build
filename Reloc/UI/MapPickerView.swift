@@ -14,6 +14,8 @@ struct MapPickerView: View {
     @State private var showPlacesSheet = false
     @State private var showStopConfirm = false
     @State private var copiedAddressToast = false
+    @State private var searchDebounceTask: Task<Void, Never>?
+    @State private var searchGeneration = 0
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -90,13 +92,16 @@ struct MapPickerView: View {
                 .autocorrectionDisabled()
                 .submitLabel(.search)
                 .onSubmit { performSearch() }
+                .onChange(of: searchText) { _, newValue in
+                    scheduleAutocomplete(for: newValue)
+                }
 
             if isSearching {
                 ProgressView().controlSize(.small)
             } else if !searchText.isEmpty {
                 Button {
                     searchText = ""
-                    searchResults = []
+                    clearSearchResults()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
@@ -237,7 +242,7 @@ struct MapPickerView: View {
                         let coord = item.placemark.coordinate
                         viewModel.selectLocationFromMap(coord, name: item.name, address: item.placemark.title)
                         cameraTarget = coord
-                        searchResults = []
+                        clearSearchResults()
                         searchText = ""
                     } label: {
                         HStack(spacing: 10) {
@@ -442,30 +447,87 @@ struct MapPickerView: View {
         .relocGlassCard(cornerRadius: 24, padding: 15)
     }
 
-    // MARK: - Search Action
+    // MARK: - Search Action & Live Autocomplete
 
+    /// True when the text is a complete "lat, lon" pair; coordinate input should not trigger place suggestions.
+    private func isCoordinateQuery(_ text: String) -> Bool {
+        let parts = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count == 2, let lat = Double(parts[0]), let lon = Double(parts[1]) else { return false }
+        return (-90.0...90.0).contains(lat) && (-180.0...180.0).contains(lon)
+    }
+
+    private func coordinate(from text: String) -> CLLocationCoordinate2D? {
+        let parts = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count == 2, let lat = Double(parts[0]), let lon = Double(parts[1]),
+              (-90.0...90.0).contains(lat), (-180.0...180.0).contains(lon) else { return nil }
+        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+    }
+
+    private func clearSearchResults() {
+        searchDebounceTask?.cancel()
+        searchDebounceTask = nil
+        searchGeneration += 1
+        searchResults = []
+        isSearching = false
+    }
+
+    /// Debounced live suggestions while the user types.
+    private func scheduleAutocomplete(for rawText: String) {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        searchDebounceTask?.cancel()
+        searchGeneration += 1
+        let generation = searchGeneration
+
+        guard !trimmed.isEmpty, !isCoordinateQuery(trimmed) else {
+            searchResults = []
+            isSearching = false
+            return
+        }
+
+        searchDebounceTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled, generation == self.searchGeneration else { return }
+            await self.fetchAndShowPlaces(query: trimmed, generation: generation)
+        }
+    }
+
+    /// Immediate full search when the keyboard search key is pressed.
     private func performSearch() {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        let parts = trimmed.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-        if parts.count == 2, let lat = Double(parts[0]), let lon = Double(parts[1]),
-           (-90.0...90.0).contains(lat), (-180.0...180.0).contains(lon) {
-            viewModel.selectWGSLocation(TargetLocation(latitude: lat, longitude: lon, altitude: viewModel.targetLocation.altitude))
+        if let coord = coordinate(from: trimmed) {
+            viewModel.selectWGSLocation(TargetLocation(latitude: coord.latitude, longitude: coord.longitude, altitude: viewModel.targetLocation.altitude))
             cameraTarget = viewModel.pendingMapCoordinate ?? viewModel.activeMapCoordinate
-            searchResults = []
+            clearSearchResults()
             searchText = ""
             return
         }
 
+        searchDebounceTask?.cancel()
+        searchGeneration += 1
+        let generation = searchGeneration
+        Task { @MainActor in
+            await self.fetchAndShowPlaces(query: trimmed, generation: generation)
+        }
+    }
+
+    @MainActor
+    private func fetchAndShowPlaces(query: String, generation: Int) async {
         isSearching = true
-        let req = MKLocalSearch.Request()
-        req.naturalLanguageQuery = trimmed
-        let search = MKLocalSearch(request: req)
-        search.start { response, _ in
-            Task { @MainActor in
-                isSearching = false
-                searchResults = response?.mapItems ?? []
+        let items = await fetchMapItems(query: query)
+        guard generation == searchGeneration else { return }
+        isSearching = false
+        searchResults = items
+    }
+
+    private func fetchMapItems(query: String) async -> [MKMapItem] {
+        await withCheckedContinuation { (continuation: CheckedContinuation<[MKMapItem], Never>) in
+            let request = MKLocalSearch.Request()
+            request.naturalLanguageQuery = query
+            let search = MKLocalSearch(request: request)
+            search.start { response, _ in
+                continuation.resume(returning: response?.mapItems ?? [])
             }
         }
     }

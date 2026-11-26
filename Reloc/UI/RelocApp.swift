@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @main
 struct RelocApp: App {
@@ -37,6 +38,11 @@ struct ContentView: View {
                 }
                 .tag(2)
         }
+        .onChange(of: viewModel.requestOpenLocationSettings) { _, shouldOpen in
+            guard shouldOpen else { return }
+            viewModel.requestOpenLocationSettings = false
+            LocationSettingsOpener.open()
+        }
         .alert("提示", isPresented: Binding(
             get: { viewModel.alertMessage != nil },
             set: { if !$0 { viewModel.alertMessage = nil } }
@@ -46,6 +52,28 @@ struct ContentView: View {
             }
         } message: {
             Text(viewModel.alertMessage ?? "")
+        }
+    }
+}
+
+/// Opens the system Location Services screen after a send-session starts.
+/// The `prefs:` deep links are not public API; the public app-settings URL is the fallback.
+private enum LocationSettingsOpener {
+    static func open() {
+        var candidates: [URL] = []
+        if let system = URL(string: "prefs:root=LOCATION_SERVICES") { candidates.append(system) }
+        if let privacy = URL(string: "prefs:root=Privacy&path=LOCATION") { candidates.append(privacy) }
+        if let appSettings = URL(string: UIApplication.openSettingsURLString) { candidates.append(appSettings) }
+        attempt(candidates, at: 0)
+    }
+
+    private static func attempt(_ urls: [URL], at index: Int) {
+        guard index < urls.count else { return }
+        UIApplication.shared.open(urls[index], options: [:]) { success in
+            guard !success else { return }
+            DispatchQueue.main.async {
+                attempt(urls, at: index + 1)
+            }
         }
     }
 }
