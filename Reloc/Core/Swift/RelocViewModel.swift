@@ -1,7 +1,19 @@
 import CoreLocation
 import Foundation
 import MapKit
+import Network
 import SwiftUI
+
+/// Cellular connection guidance, mirroring WrapPin Standard's mobile-data
+/// workaround. On a pure cellular path iOS mDNSResponder does not answer local
+/// Bonjour queries, so the on-device Remote Pairing service cannot be found.
+/// Turning mobile data off briefly lets the local service resolve again.
+public enum CellularGuidance: Equatable, Sendable {
+    case none
+    case turnOffData      // Ask the user to switch mobile data off briefly.
+    case turnBackOnData   // Session established; data may be restored.
+    case connectionHelp   // Discovery failed even after the workaround.
+}
 
 @MainActor
 public final class RelocViewModel: ObservableObject {
@@ -106,6 +118,20 @@ public final class RelocViewModel: ObservableObject {
     /// One-shot request from the start-flow to open the system Location Services settings screen.
     @Published public var requestOpenLocationSettings = false
 
+    // MARK: - Cellular (mobile data) guidance state
+    /// Current mobile-data guidance step for the system-level simulation session.
+    @Published public var cellularGuidance: CellularGuidance = .none
+    /// Whether a WiFi interface currently satisfies an internet path. `nil` until
+    /// NWPathMonitor delivers its first update, so startup can wait briefly.
+    @Published public var isWiFiSatisfied: Bool?
+    /// Human-readable discovery status shown in the guidance card.
+    @Published public var cellularDiscoveryStatus = ""
+
+    private let wifiMonitor = NWPathMonitor(requiredInterfaceType: .wifi)
+    private let wifiMonitorQueue = DispatchQueue(label: "reloc.wifi.path", qos: .utility)
+    private var cellularDiscoveryLoopTask: Task<Void, Never>?
+    private var pendingSystemPairingData: Data?
+
     private var savedPairing: SavedPairing?
     private var mfiSigner: RLMFiSigner?
     private var session: AccessoryLocationSession?
@@ -154,6 +180,16 @@ public final class RelocViewModel: ObservableObject {
                 self.events.removeFirst(self.events.count - 500)
             }
         }
+
+        // Track WiFi availability so the system-level session can detect the
+        // pure-cellular case and offer the WrapPin-style mobile-data workaround.
+        wifiMonitor.pathUpdateHandler = { [weak self] path in
+            let satisfied = path.status == .satisfied
+            Task { @MainActor [weak self] in
+                self?.isWiFiSatisfied = satisfied
+            }
+        }
+        wifiMonitor.start(queue: wifiMonitorQueue)
 
         reverseGeocode(wgsLocation: targetLocation)
     }
@@ -567,61 +603,167 @@ public final class RelocViewModel: ObservableObject {
     }
 
     /// System-level LocationSimulation via the WrapPin native bridge. Needs the
-    /// full Bonjour service info (identifier + authTag), discovered on the WiFi link.
+    /// full Bonjour service info (identifier + authTag). On a pure cellular path
+    /// iOS does not answer local Bonjour queries, so we replicate WrapPin
+    /// Standard's mobile-data workaround: detect cellular, ask the user to switch
+    /// mobile data off briefly, and keep re-running discovery until the local
+    /// device service resolves again.
     private func startSystemSession(pairingData: Data) {
+        pendingSystemPairingData = pairingData
+        cellularDiscoveryStatus = "正在检测网络…"
         Task { @MainActor in
-            let service = await RemotePairingDiscovery.discoverService(record: pairingData)
-                ?? RemotePairingServiceInfo(
-                    port: store.lastDiscoveredRemotePort ?? remotePort,
-                    host: host.trimmingCharacters(in: .whitespacesAndNewlines),
-                    identifier: "",
-                    authTag: ""
-                )
-            guard !service.identifier.isEmpty, !service.authTag.isEmpty else {
-                self.alertMessage = "无法发现这台 iPhone 的配对服务（系统级模拟需要 WiFi 下的 Bonjour 发现，且 pairing 记录需为本机配对）。"
-                self.stopJitterTimer()
-                self.keepAlive.stop()
-                self.coreLocation.stop()
-                return
+            // Let NWPathMonitor deliver its first path update before deciding.
+            if self.isWiFiSatisfied == nil {
+                try? await Task.sleep(for: .milliseconds(600))
             }
+            let onCellular = self.isWiFiSatisfied == false
+            if onCellular {
+                // Enter the mobile-data guidance flow and start probing in a loop.
+                self.cellularGuidance = .turnOffData
+                self.cellularDiscoveryStatus = "蜂窝数据下无法直接发现设备。请按提示临时关闭蜂窝数据。"
+                self.startCellularDiscoveryLoop(pairingData: pairingData)
+            } else {
+                // WiFi (or unknown): one discovery attempt, then report result.
+                let service = await RemotePairingDiscovery.discoverService(record: pairingData)
+                guard let service, !service.identifier.isEmpty, !service.authTag.isEmpty else {
+                    self.cellularGuidance = .connectionHelp
+                    self.cellularDiscoveryStatus = "未发现本机配对服务。请确认代理隧道已连接 10.7.0.1 回环，且配对文件为本机配对。"
+                    self.abortSystemStart()
+                    return
+                }
+                self.cellularGuidance = .none
+                self.launchSystemSession(pairingData: pairingData, service: service)
+            }
+        }
+    }
 
-            let newSession = SystemLocationSession(
-                initialLocation: self.targetLocation,
-                onEvent: { [weak self] event in
-                    Task { @MainActor in
-                        guard let self else { return }
-                        self.events.append(event)
-                        if self.events.count > 500 {
-                            self.events.removeFirst(self.events.count - 500)
-                        }
-                    }
-                },
-                onSnapshot: { [weak self] snap in
-                    Task { @MainActor in
-                        guard let self else { return }
-                        self.snapshot = snap
-                        if !snap.isRunning {
-                            self.stopJitterTimer()
-                            self.keepAlive.stop()
-                            self.coreLocation.stop()
-                            self.systemSession = nil
-                        }
+    /// WrapPin-style loop: while in the "turn mobile data off" step, keep
+    /// re-running local Bonjour discovery every few seconds. Once the user
+    /// switches data off, mDNSResponder resolves the on-device service and we
+    /// establish the session immediately.
+    private func startCellularDiscoveryLoop(pairingData: Data) {
+        cellularDiscoveryLoopTask?.cancel()
+        cellularDiscoveryLoopTask = Task { @MainActor in
+            // Bound the wait so a stuck device cannot spin forever.
+            for attempt in 1...45 {
+                guard !Task.isCancelled,
+                      self.cellularGuidance == .turnOffData,
+                      self.pendingSystemPairingData != nil else { return }
+                self.cellularDiscoveryStatus = "正在发现本机设备（第 \(attempt) 次）…"
+                let service = await RemotePairingDiscovery.discoverService(record: pairingData)
+                guard !Task.isCancelled, self.cellularGuidance == .turnOffData else { return }
+                if let service, !service.identifier.isEmpty, !service.authTag.isEmpty {
+                    self.cellularDiscoveryLoopTask = nil
+                    self.launchSystemSession(pairingData: pairingData, service: service)
+                    // Session is up; tell the user mobile data may be restored.
+                    self.cellularGuidance = .turnBackOnData
+                    self.cellularDiscoveryStatus = "定位已建立，可恢复蜂窝数据，5G 下会继续模拟。"
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(1200))
+            }
+            guard !Task.isCancelled, self.cellularGuidance == .turnOffData else { return }
+            self.cellularGuidance = .connectionHelp
+            self.cellularDiscoveryStatus = "多次尝试仍未发现设备。请确认代理隧道已连接，然后重试。"
+            self.abortSystemStart()
+        }
+    }
+
+    /// Build and start the actual WrapPin native location session.
+    private func launchSystemSession(pairingData: Data, service: RemotePairingServiceInfo) {
+        let newSession = SystemLocationSession(
+            initialLocation: self.targetLocation,
+            onEvent: { [weak self] event in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.events.append(event)
+                    if self.events.count > 500 {
+                        self.events.removeFirst(self.events.count - 500)
                     }
                 }
-            )
-            self.systemSession = newSession
-            newSession.start(
-                pairingData: pairingData,
-                service: service,
-                initialLocation: self.targetLocation
-            )
+            },
+            onSnapshot: { [weak self] snap in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.snapshot = snap
+                    if !snap.isRunning {
+                        self.stopJitterTimer()
+                        self.keepAlive.stop()
+                        self.coreLocation.stop()
+                        self.systemSession = nil
+                    }
+                }
+            }
+        )
+        self.systemSession = newSession
+        newSession.start(
+            pairingData: pairingData,
+            service: service,
+            initialLocation: self.targetLocation
+        )
+    }
+
+    private func abortSystemStart() {
+        stopJitterTimer()
+        keepAlive.stop()
+        coreLocation.stop()
+    }
+
+    // MARK: - Cellular guidance user actions
+
+    /// User reports mobile data is now off (or returns from Control Center).
+    /// Kick an immediate discovery pass; the loop also keeps probing.
+    public func userDidTurnOffMobileData() {
+        guard let data = pendingSystemPairingData, cellularGuidance == .turnOffData else { return }
+        startCellularDiscoveryLoop(pairingData: data)
+    }
+
+    /// Retry from the connection-help state.
+    public func retryCellularConnection() {
+        cellularGuidance = .none
+        guard let data = pendingSystemPairingData else { return }
+        let onCellular = isWiFiSatisfied == false
+        if onCellular {
+            cellularGuidance = .turnOffData
+            cellularDiscoveryStatus = "请临时关闭蜂窝数据，App 会自动发现设备。"
+            startCellularDiscoveryLoop(pairingData: data)
+        } else {
+            Task { @MainActor in
+                let service = await RemotePairingDiscovery.discoverService(record: data)
+                guard let service, !service.identifier.isEmpty, !service.authTag.isEmpty else {
+                    self.cellularGuidance = .connectionHelp
+                    self.abortSystemStart()
+                    return
+                }
+                self.cellularGuidance = .none
+                self.launchSystemSession(pairingData: data, service: service)
+            }
         }
+    }
+
+    /// Dismiss the guidance card (e.g. after the user restores mobile data).
+    public func dismissCellularGuidance() {
+        cellularGuidance = .none
+        cellularDiscoveryStatus = ""
+    }
+
+    /// Called when the app returns to the foreground so the cellular loop can
+    /// resume right away after the user toggles data in Control Center.
+    public func appDidBecomeActive() {
+        guard cellularGuidance == .turnOffData, let data = pendingSystemPairingData else { return }
+        startCellularDiscoveryLoop(pairingData: data)
     }
 
     public func stopAndRestore() {
         stopJitterTimer()
+        cellularDiscoveryLoopTask?.cancel()
+        cellularDiscoveryLoopTask = nil
+        pendingSystemPairingData = nil
+        cellularGuidance = .none
+        cellularDiscoveryStatus = ""
         session?.stop()
         systemSession?.stop()
+        systemSession = nil
         keepAlive.stop()
         coreLocation.stop()
         store.saveInterruptedSession(nil)
