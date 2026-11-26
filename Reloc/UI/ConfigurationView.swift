@@ -330,6 +330,34 @@ struct ConfigurationView: View {
                         }
                     }
                 }
+
+                Section("构建与凭据自检") {
+                    HStack {
+                        Text("构建标识")
+                        Spacer()
+                        Text(viewModel.buildStamp)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+
+                    HStack(alignment: .top) {
+                        Text("凭据来源")
+                        Spacer()
+                        Text(viewModel.mFiCredentialDiagnostic)
+                            .font(.caption)
+                            .foregroundStyle(viewModel.hasMFiCredential ? RelocTheme.emerald : RelocTheme.crimson)
+                            .multilineTextAlignment(.trailing)
+                            .textSelection(.enabled)
+                    }
+
+                    Button {
+                        viewModel.reloadMFiCredential()
+                        RelocTheme.hapticLight()
+                    } label: {
+                        Label("重新检测 MFi 凭据", systemImage: "arrow.clockwise")
+                    }
+                }
             }
             .navigationTitle("设备配对与连接")
             .navigationBarTitleDisplayMode(.inline)
