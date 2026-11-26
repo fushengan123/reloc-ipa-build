@@ -110,6 +110,14 @@ public final class SystemLocationSession {
             // A user-initiated stop surfaces as stage 15 (WPLocationStageCancelled).
             // Treat it as a normal end, not an error.
             let wasCancelled = outcome.stage == 15 || self.wasCancelledFlag()
+            // Always record how the run ended: without this the only visible
+            // symptom of a failed stop is "the location did not change".
+            let safeMessage = outcome.message.replacingOccurrences(of: "\"", with: "'")
+            let cancelledFlag = wasCancelled ? "true" : "false"
+            self.emitSystem(
+                "system_session_ended",
+                detail: "{\"stage\":\(outcome.stage),\"rc\":\(outcome.returnCode),\"cancelled\":\(cancelledFlag),\"message\":\"\(safeMessage)\"}"
+            )
             if (outcome.returnCode != 0 || outcome.failed) && !wasCancelled {
                 self.emitSystemError(outcome.message)
             }
@@ -157,10 +165,14 @@ public final class SystemLocationSession {
         stateLock.lock()
         let activeSession = session
         stateLock.unlock()
-        guard let activeSession else { return false }
+        guard let activeSession else {
+            emitSystem("system_session_stop", detail: "{\"issued\":false,\"reason\":\"no_handle\"}")
+            return false
+        }
         cancelled = true
         stopLocationMirror()
         wp_location_session_cancel(activeSession)
+        emitSystem("system_session_stop", detail: "{\"issued\":true}")
         return true
     }
 
