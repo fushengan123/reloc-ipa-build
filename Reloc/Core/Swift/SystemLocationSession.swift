@@ -1,5 +1,7 @@
 import Foundation
-import WrapPinPairingFFI
+// WrappinPairingFFI C functions are exposed via Reloc-Bridging-Header.h
+// (wrappin_pairing.h). No Swift module import: the xcframework has no modulemap
+// to avoid colliding with RelocDeviceBridge's modulemap at build time.
 
 /// System-level location simulation session.
 ///

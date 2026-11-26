@@ -1,3 +1,4 @@
+#import "wrappin_pairing.h"
 #import "RLASN1DER.h"
 #import "RLMFiSigner.h"
 #import "RLPairingRecord.h"
