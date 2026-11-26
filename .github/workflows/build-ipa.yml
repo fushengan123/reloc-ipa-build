@@ -1,4 +1,4 @@
-name: Build unsigned IPA
+name: Build Reloc-ready IPA
 
 on:
   push:
@@ -25,7 +25,7 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Build unsigned iphoneos app
+      - name: Build iphoneos app
         run: |
           xcodebuild build \
             -project Reloc.xcodeproj \
@@ -39,11 +39,11 @@ jobs:
         run: |
           mkdir -p build/Payload
           cp -R build/DerivedData/Build/Products/Release-iphoneos/Reloc.app build/Payload/
-          (cd build && zip -qry Reloc.ipa Payload)
+          (cd build && zip -qry Reloc-ready.ipa Payload)
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: Reloc-ready-${{ env.STAMP }}
-          path: build/Reloc.ipa
+          path: build/Reloc-ready.ipa
           if-no-files-found: error
