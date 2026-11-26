@@ -150,6 +150,10 @@ public final class RelocViewModel: ObservableObject {
     /// snapshots arrive with isRunning == false; without this guard the UI
     /// would treat startup as a disconnect and swap cards immediately.
     private var systemSessionWasRunning = false
+    /// Set when the user stops the session on purpose. The stop path emits the
+    /// same isRunning == false snapshot as a crash, so without this the guidance
+    /// card would pop up right after the user pressed stop.
+    private var systemSessionStopRequested = false
     /// Bounds automatic reconnects so a session that fails instantly cannot spin.
     private var systemSessionRestartCount = 0
     private var jitterTimer: Timer?
@@ -720,6 +724,7 @@ public final class RelocViewModel: ObservableObject {
         systemSession?.stop()
         systemSession = nil
         systemSessionWasRunning = false
+        systemSessionStopRequested = false
         let newSession = SystemLocationSession(
             initialLocation: self.targetLocation,
             onEvent: { [weak self] event in
@@ -735,6 +740,9 @@ public final class RelocViewModel: ObservableObject {
                 Task { @MainActor in
                     guard let self else { return }
                     self.snapshot = snap
+                    // A stop the user asked for is not a failure: ignore its
+                    // terminal snapshot so no guidance card reappears.
+                    guard !self.systemSessionStopRequested else { return }
                     if snap.isRunning {
                         self.systemSessionWasRunning = true
                         // Only now is the location genuinely established, so this
@@ -838,6 +846,11 @@ public final class RelocViewModel: ObservableObject {
         cellularDiscoveryLoopTask?.cancel()
         cellularDiscoveryLoopTask = nil
         pendingSystemPairingData = nil
+        // Mark intent before stopping: the session emits a terminal snapshot and
+        // it must not be mistaken for a dropped connection.
+        systemSessionStopRequested = true
+        systemSessionWasRunning = false
+        systemSessionRestartCount = 0
         cellularGuidance = .none
         cellularDiscoveryStatus = ""
         session?.stop()
