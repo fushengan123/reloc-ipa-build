@@ -16,6 +16,7 @@ struct RelocApp: App {
 
 struct ContentView: View {
     @ObservedObject var viewModel: RelocViewModel
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab = 0
     @State private var showLocationGuide = false
 
@@ -64,6 +65,113 @@ struct ContentView: View {
             }
         } message: {
             Text("即将打开「设置 → Reloc」。进入后点顶部的「位置 / 定位」，即可到达系统定位服务页；关闭再打开「定位服务」总开关可恢复真实 GPS。")
+        }
+        .overlay {
+            if viewModel.cellularGuidance != .none {
+                CellularGuidanceCard(viewModel: viewModel)
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { viewModel.appDidBecomeActive() }
+        }
+    }
+}
+
+/// WrapPin-style mobile-data guidance card. Shown on top of the tab view whenever
+/// the system-level session is negotiating a cellular connection.
+private struct CellularGuidanceCard: View {
+    @ObservedObject var viewModel: RelocViewModel
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: iconName)
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(tint)
+
+            Text(title)
+                .font(.headline)
+
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            if viewModel.cellularGuidance == .turnOffData {
+                Text(viewModel.cellularDiscoveryStatus)
+                    .font(.caption)
+                    .foregroundStyle(RelocTheme.accent)
+                    .multilineTextAlignment(.center)
+            }
+
+            HStack(spacing: 12) {
+                if viewModel.cellularGuidance == .turnBackOnData {
+                    Button("知道了") {
+                        viewModel.dismissCellularGuidance()
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else if viewModel.cellularGuidance == .turnOffData {
+                    Button("取消") {
+                        viewModel.stopAndRestore()
+                    }
+                    .buttonStyle(.bordered)
+                    Button("已关闭数据，继续") {
+                        viewModel.userDidTurnOffMobileData()
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    Button("取消") {
+                        viewModel.stopAndRestore()
+                    }
+                    .buttonStyle(.bordered)
+                    Button("重试") {
+                        viewModel.retryCellularConnection()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+        .padding(22)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .padding(.horizontal, 28)
+    }
+
+    private var title: String {
+        switch viewModel.cellularGuidance {
+        case .turnOffData: return "蜂窝网络定位设置"
+        case .turnBackOnData: return "定位已建立"
+        case .connectionHelp: return "连接未成功"
+        case .none: return ""
+        }
+    }
+
+    private var message: String {
+        switch viewModel.cellularGuidance {
+        case .turnOffData:
+            return "请保持外部代理的 10.7.0.1 隧道连接，然后临时关闭这台 iPhone 的蜂窝数据，再返回 Reloc。App 会自动发现设备并开始定位；成功后会提示你恢复数据。"
+        case .turnBackOnData:
+            return "定位模拟已开始。现在可以重新打开蜂窝数据，模拟会继续通过 5G 运行。"
+        case .connectionHelp:
+            return viewModel.cellularDiscoveryStatus.isEmpty
+                ? "请确认代理隧道已连接并重试。"
+                : viewModel.cellularDiscoveryStatus
+        case .none: return ""
+        }
+    }
+
+    private var iconName: String {
+        switch viewModel.cellularGuidance {
+        case .turnOffData: return "antenna.radiowaves.left.and.right"
+        case .turnBackOnData: return "checkmark.circle.fill"
+        case .connectionHelp: return "exclamationmark.triangle.fill"
+        case .none: return "questionmark"
+        }
+    }
+
+    private var tint: Color {
+        switch viewModel.cellularGuidance {
+        case .turnBackOnData: return RelocTheme.emerald
+        case .connectionHelp: return RelocTheme.amber
+        default: return RelocTheme.accent
         }
     }
 }
