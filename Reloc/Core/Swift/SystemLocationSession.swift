@@ -149,14 +149,19 @@ public final class SystemLocationSession {
         updateTimer = timer
     }
 
-    public func stop() {
+    /// Cancels the live FFI session. Returns `false` when there was no handle to
+    /// cancel — meaning the device was never told to stop and the caller has to
+    /// issue the stop some other way.
+    @discardableResult
+    public func stop() -> Bool {
         stateLock.lock()
         let activeSession = session
         stateLock.unlock()
-        guard let activeSession else { return }
+        guard let activeSession else { return false }
         cancelled = true
         stopLocationMirror()
         wp_location_session_cancel(activeSession)
+        return true
     }
 
     // MARK: - Internals
