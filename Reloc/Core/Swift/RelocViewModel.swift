@@ -653,6 +653,7 @@ public final class RelocViewModel: ObservableObject {
                 // WiFi: try one quiet discovery first — no guidance card if it works.
                 let service = await RemotePairingDiscovery.discoverService(record: pairingData)
                 if let service, !service.identifier.isEmpty, !service.authTag.isEmpty {
+                    self.cellularDiscoveryStatus = ""
                     self.cellularGuidance = .none
                     self.launchSystemSession(pairingData: pairingData, service: service)
                     return
@@ -687,10 +688,11 @@ public final class RelocViewModel: ObservableObject {
                 if let service, !service.identifier.isEmpty, !service.authTag.isEmpty {
                     self.cellularDiscoveryLoopTask = nil
                     self.launchSystemSession(pairingData: pairingData, service: service)
-                    // Session is up — original app switches the card straight to
-                    // "turn mobile data back on".
+                    // Clear the probing text first: leaving it set makes the new
+                    // card render alongside the previous step's wording and reads
+                    // as two contradictory popups.
+                    self.cellularDiscoveryStatus = ""
                     self.cellularGuidance = .turnBackOnData
-                    self.cellularDiscoveryStatus = "定位已建立。现在可以重新开启蜂窝网络，模拟会继续通过 5G 运行。"
                     return
                 }
                 try? await Task.sleep(for: .milliseconds(1200))
@@ -704,6 +706,10 @@ public final class RelocViewModel: ObservableObject {
 
     /// Build and start the actual WrapPin native location session.
     private func launchSystemSession(pairingData: Data, service: RemotePairingServiceInfo) {
+        // Exactly one system session may exist; otherwise a stale session keeps
+        // reporting snapshots and the guidance state flips back and forth.
+        systemSession?.stop()
+        systemSession = nil
         let newSession = SystemLocationSession(
             initialLocation: self.targetLocation,
             onEvent: { [weak self] event in
@@ -724,6 +730,13 @@ public final class RelocViewModel: ObservableObject {
                         self.keepAlive.stop()
                         self.coreLocation.stop()
                         self.systemSession = nil
+                        // Do not leave the "you may restore mobile data" card on
+                        // screen after the session died — it would sit on top of
+                        // the "turn data off" card on the next attempt.
+                        if self.cellularGuidance == .turnBackOnData {
+                            self.cellularGuidance = .connectionHelp
+                            self.cellularDiscoveryStatus = "定位模拟已中断，请重试。"
+                        }
                     }
                 }
             }
