@@ -142,7 +142,7 @@ private struct CellularGuidanceCard: View {
 
     private var title: String {
         switch viewModel.cellularGuidance {
-        case .turnOffData: return "请暂时关闭蜂窝网络"
+        case .turnOffData: return "请先关闭蜂窝网络"
         case .turnBackOnData: return "现在可以重新开启蜂窝网络"
         case .connectionHelp: return "仍在连接"
         case .none: return ""
@@ -152,7 +152,7 @@ private struct CellularGuidanceCard: View {
     private var message: String {
         switch viewModel.cellularGuidance {
         case .turnOffData:
-            return "检测到你正在用蜂窝网络。请保持外部代理的 10.7.0.1 隧道连接，暂时关闭这台 iPhone 的蜂窝数据；回到 App 后会自动发现设备，如没有可点「继续」。"
+            return "定位尚未开启成功。请保持外部代理的 10.7.0.1 隧道连接，先关闭这台 iPhone 的蜂窝网络；关掉后回到 App 会自动发现设备，如没有可点「继续」。"
         case .turnBackOnData:
             return "定位模拟已建立。现在可以重新开启蜂窝网络，模拟会继续通过 5G 运行。"
         case .connectionHelp:
