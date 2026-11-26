@@ -390,8 +390,13 @@ struct MapPickerView: View {
                 Button(action: switchToConfig) {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(RelocTheme.amber)
-                        Text("缺少 MFi-v3 凭据，开始定位不可用。前往「设备连接 → 配件认证」导入")
-                            .font(.caption.weight(.semibold))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("缺少 MFi-v3 凭据，开始定位不可用。前往「设备连接 → 配件认证」导入")
+                                .font(.caption.weight(.semibold))
+                            Text("来源：\(viewModel.mFiCredentialDiagnostic) · 构建 \(viewModel.buildStamp)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                         Spacer()
                         Image(systemName: "chevron.right").font(.caption2.weight(.bold))
                     }
