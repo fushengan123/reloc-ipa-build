@@ -158,6 +158,10 @@ public final class RelocViewModel: ObservableObject {
     /// were created with, so a late snapshot from a previous session can never
     /// reopen the guidance card after the user stopped or restarted.
     private var systemSessionToken = 0
+    /// Kept so a stop can still reach the device after the live session object
+    /// has already gone away (`cancel` needs a live WPLocationSession handle).
+    private var lastSystemPairingData: Data?
+    private var lastSystemService: RemotePairingServiceInfo?
     /// Bounds automatic reconnects so a session that fails instantly cannot spin.
     private var systemSessionRestartCount = 0
     private var jitterTimer: Timer?
@@ -731,6 +735,26 @@ public final class RelocViewModel: ObservableObject {
         }
     }
 
+    /// `wp_location_session_cancel` only reaches the device while a session is
+    /// alive. If the running session already returned on its own, the iPhone can
+    /// be left holding the simulated coordinate and a later stop has nothing to
+    /// cancel — which looks exactly like "停止并恢复 has no effect". In that case
+    /// open a throwaway session and cancel it, so the device receives the stop.
+    private func clearStraySimulation() {
+        guard systemSession == nil,
+              let data = lastSystemPairingData,
+              let service = lastSystemService else { return }
+        let cleanup = SystemLocationSession(
+            initialLocation: targetLocation,
+            onEvent: { _ in },
+            onSnapshot: { _ in }
+        )
+        cleanup.start(pairingData: data, service: service, initialLocation: targetLocation)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            cleanup.stop()
+        }
+    }
+
     /// Build and start the actual WrapPin native location session.
     private func launchSystemSession(pairingData: Data, service: RemotePairingServiceInfo) {
         // Exactly one system session may exist; otherwise a stale session keeps
@@ -741,6 +765,8 @@ public final class RelocViewModel: ObservableObject {
         systemSessionStopRequested = false
         systemSessionToken &+= 1
         let sessionToken = systemSessionToken
+        lastSystemPairingData = pairingData
+        lastSystemService = service
         let newSession = SystemLocationSession(
             initialLocation: self.targetLocation,
             onEvent: { [weak self] event in
@@ -880,6 +906,7 @@ public final class RelocViewModel: ObservableObject {
         session?.stop()
         systemSession?.stop()
         systemSession = nil
+        clearStraySimulation()
         keepAlive.stop()
         coreLocation.stop()
         store.saveInterruptedSession(nil)
