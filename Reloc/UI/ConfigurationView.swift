@@ -201,6 +201,9 @@ struct ConfigurationView: View {
                                     : "系统级模拟模式无需此凭据；仅配件注入模式需要。"))
                                 .font(.caption)
                                 .foregroundStyle(viewModel.hasMFiCredential ? RelocTheme.emerald : .secondary)
+                            Text("来源：\(viewModel.mFiCredentialDiagnostic)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
                         Spacer()
                     }
