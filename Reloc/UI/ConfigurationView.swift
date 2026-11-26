@@ -101,6 +101,13 @@ struct ConfigurationView: View {
                     }
                     .disabled(pairing.isRunning || viewModel.isVerifyingConnection || viewModel.snapshot.isRunning)
 
+                    Button {
+                        viewModel.importPairingText(UIPasteboard.general.string ?? "")
+                    } label: {
+                        Label("从剪贴板粘贴导入（XML plist）", systemImage: "doc.on.clipboard")
+                    }
+                    .disabled(pairing.isRunning || viewModel.isVerifyingConnection || viewModel.snapshot.isRunning)
+
                     if viewModel.pairingStatus.isLoaded {
                         Button("移除已保存配对记录", role: .destructive) {
                             viewModel.removePairingFile()
@@ -164,7 +171,7 @@ struct ConfigurationView: View {
                     Text("自动发现 Remote Pairing 服务并用配对记录验证广播身份，最终通过设备服务确认连接可用。")
                 }
 
-                Section("配件认证") {
+                Section {
                     HStack(spacing: 12) {
                         SettingsIconBadge(
                             systemName: viewModel.hasMFiCredential ? "checkmark.seal.fill" : "exclamationmark.triangle.fill",
@@ -188,6 +195,8 @@ struct ConfigurationView: View {
                         Label("导入 MFi 凭据（同时选两个文件）", systemImage: "square.and.arrow.down.on.square")
                     }
                     .disabled(viewModel.snapshot.isRunning)
+                } header: {
+                    Text("配件认证")
                 } footer: {
                     Text("凭据会保存在本应用私有目录，仅用于本地配件协议签名；私钥不会上传。")
                 }

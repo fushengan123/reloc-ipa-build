@@ -549,6 +549,32 @@ public final class RelocViewModel: ObservableObject {
         invalidateDeviceConnection()
     }
 
+    /// Imports an XML plist pairing file pasted from the clipboard.
+    public func importPairingText(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            alertMessage = "剪贴板中没有可导入的文本。"
+            return
+        }
+        guard let data = trimmed.data(using: .utf8) else {
+            alertMessage = "剪贴板内容无法转换为文本。"
+            return
+        }
+        do {
+            _ = try store.importPairingData(data)
+            reloadPairing()
+            invalidateDeviceConnection()
+            events.append(ProtocolEvent(
+                name: "pairing_imported_from_clipboard",
+                detail: "{\"event\":\"pairing_imported_from_clipboard\"}"
+            ))
+            alertMessage = "配对文件已从剪贴板导入。"
+            testConnection(silent: true)
+        } catch {
+            alertMessage = "剪贴板配对内容导入失败：\(error.localizedDescription)"
+        }
+    }
+
     public func toggleFavoriteForInspected() {
         let loc = inspectedLocation
         if let idx = favorites.firstIndex(where: { abs($0.latitude - loc.latitude) < 1e-4 && abs($0.longitude - loc.longitude) < 1e-4 }) {
