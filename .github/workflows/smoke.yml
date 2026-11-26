@@ -4,7 +4,12 @@ on:
   workflow_dispatch:
 
 jobs:
-  smoke:
+  smoke-ubuntu:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "runner alive"
+      - run: echo "ubuntu runner alive"
+
+  smoke-macos:
+    runs-on: macos-latest
+    steps:
+      - run: echo "macos runner alive"
