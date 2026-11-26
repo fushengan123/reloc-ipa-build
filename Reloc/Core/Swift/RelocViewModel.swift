@@ -154,6 +154,10 @@ public final class RelocViewModel: ObservableObject {
     /// same isRunning == false snapshot as a crash, so without this the guidance
     /// card would pop up right after the user pressed stop.
     private var systemSessionStopRequested = false
+    /// Bumped on every start and on every stop. Callbacks carry the token they
+    /// were created with, so a late snapshot from a previous session can never
+    /// reopen the guidance card after the user stopped or restarted.
+    private var systemSessionToken = 0
     /// Bounds automatic reconnects so a session that fails instantly cannot spin.
     private var systemSessionRestartCount = 0
     private var jitterTimer: Timer?
@@ -685,30 +689,40 @@ public final class RelocViewModel: ObservableObject {
     /// local Bonjour discovery every few seconds. The card stays visible the
     /// whole time (no intermediate "start" step) — once data is off, mDNSResponder
     /// resolves the on-device service and we establish the session immediately.
-    private func startCellularDiscoveryLoop(pairingData: Data) {
+    private func startCellularDiscoveryLoop(pairingData: Data, silent: Bool = false) {
         cellularDiscoveryLoopTask?.cancel()
-        cellularGuidance = .turnOffData
+        if !silent {
+            cellularGuidance = .turnOffData
+        }
         cellularDiscoveryLoopTask = Task { @MainActor in
             // Bound the wait so a stuck device cannot spin forever.
             for attempt in 1...45 {
                 guard !Task.isCancelled,
-                      self.cellularGuidance == .turnOffData,
-                      self.pendingSystemPairingData != nil else { return }
-                self.cellularDiscoveryStatus = "正在检测这台 iPhone…（第 \(attempt) 次）\n请先关闭蜂窝网络，保持代理 10.7.0.1 隧道连接。"
+                      self.pendingSystemPairingData != nil,
+                      silent || self.cellularGuidance == .turnOffData else { return }
+                if !silent {
+                    self.cellularDiscoveryStatus = "正在检测这台 iPhone…（第 \(attempt) 次）\n请先关闭蜂窝网络，保持代理 10.7.0.1 隧道连接。"
+                }
                 let service = await RemotePairingDiscovery.discoverService(record: pairingData)
-                guard !Task.isCancelled, self.cellularGuidance == .turnOffData else { return }
+                guard !Task.isCancelled, silent || self.cellularGuidance == .turnOffData else { return }
                 if let service, !service.identifier.isEmpty, !service.authTag.isEmpty {
                     self.cellularDiscoveryLoopTask = nil
                     // Stay on the "turn data off" card until the native session
                     // actually reports running. Switching to "you may restore
                     // data" here would claim success before the session exists.
-                    self.cellularDiscoveryStatus = "已发现设备，正在建立定位模拟…"
+                    if !silent {
+                        self.cellularDiscoveryStatus = "已发现设备，正在建立定位模拟…"
+                    }
                     self.launchSystemSession(pairingData: pairingData, service: service)
                     return
                 }
                 try? await Task.sleep(for: .milliseconds(1200))
             }
-            guard !Task.isCancelled, self.cellularGuidance == .turnOffData else { return }
+            guard !Task.isCancelled else { return }
+            if silent {
+                // The silent reconnect failed; only now is a card justified.
+                self.cellularGuidance = .turnOffData
+            }
             // Keep the same card. The location is still not established, so the
             // only message allowed is "turn mobile data off" plus a retry hint —
             // never a second panel that would cover it.
@@ -725,6 +739,8 @@ public final class RelocViewModel: ObservableObject {
         systemSession = nil
         systemSessionWasRunning = false
         systemSessionStopRequested = false
+        systemSessionToken &+= 1
+        let sessionToken = systemSessionToken
         let newSession = SystemLocationSession(
             initialLocation: self.targetLocation,
             onEvent: { [weak self] event in
@@ -739,6 +755,10 @@ public final class RelocViewModel: ObservableObject {
             onSnapshot: { [weak self] snap in
                 Task { @MainActor in
                     guard let self else { return }
+                    // Ignore anything from a superseded session: after a stop or
+                    // a restart the old session's terminal snapshot must not be
+                    // able to bring the guidance card back.
+                    guard self.systemSessionToken == sessionToken else { return }
                     self.snapshot = snap
                     // A stop the user asked for is not a failure: ignore its
                     // terminal snapshot so no guidance card reappears.
@@ -769,9 +789,11 @@ public final class RelocViewModel: ObservableObject {
                     // "session interrupted" panel on top of it.
                     if let data = self.pendingSystemPairingData, self.systemSessionRestartCount < 2 {
                         self.systemSessionRestartCount += 1
-                        self.cellularGuidance = .turnOffData
-                        self.cellularDiscoveryStatus = "定位模拟中断，正在重新检测这台 iPhone…"
-                        self.startCellularDiscoveryLoop(pairingData: data)
+                        // It had already worked once: reconnect quietly instead of
+                        // shoving a "turn data off" card at the user.
+                        self.cellularGuidance = .none
+                        self.cellularDiscoveryStatus = ""
+                        self.startCellularDiscoveryLoop(pairingData: data, silent: true)
                     } else {
                         self.cellularGuidance = .turnOffData
                         self.cellularDiscoveryStatus = "定位模拟多次中断。请确认代理隧道与配对记录后，点「继续」重试。"
@@ -851,6 +873,8 @@ public final class RelocViewModel: ObservableObject {
         systemSessionStopRequested = true
         systemSessionWasRunning = false
         systemSessionRestartCount = 0
+        // Invalidate every callback bound to the session we are stopping.
+        systemSessionToken &+= 1
         cellularGuidance = .none
         cellularDiscoveryStatus = ""
         session?.stop()
