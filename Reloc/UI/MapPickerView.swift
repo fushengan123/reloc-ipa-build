@@ -386,7 +386,7 @@ struct MapPickerView: View {
                 }
             }
 
-            if !viewModel.hasMFiCredential {
+            if viewModel.isBlockedByMissingMFiCredential {
                 Button(action: switchToConfig) {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(RelocTheme.amber)

@@ -62,6 +62,9 @@ public final class RelocViewModel: ObservableObject {
             }
         }
     }
+    @Published public var locationMode: LocationMode {
+        didSet { store.locationMode = locationMode }
+    }
     @Published public var appearanceMode: AppAppearanceMode {
         didSet { store.appearanceMode = appearanceMode }
     }
@@ -106,6 +109,7 @@ public final class RelocViewModel: ObservableObject {
     private var savedPairing: SavedPairing?
     private var mfiSigner: RLMFiSigner?
     private var session: AccessoryLocationSession?
+    private var systemSession: SystemLocationSession?
     private var jitterTimer: Timer?
 
     public init() {
@@ -118,6 +122,7 @@ public final class RelocViewModel: ObservableObject {
         self.gcj02CorrectionEnabled = store.gcj02CorrectionEnabled
         self.backgroundKeepAliveEnabled = store.backgroundKeepAliveEnabled
         self.microJitterEnabled = store.microJitterEnabled
+        self.locationMode = store.locationMode
         self.appearanceMode = store.appearanceMode
         self.mapStyle = store.mapStyle
         self.targetLocation = store.lastTargetLocation
@@ -276,6 +281,7 @@ public final class RelocViewModel: ObservableObject {
             ? CoordinateTransform.applyMicroJitter(to: targetLocation)
             : targetLocation
         session?.locationBox.set(outgoing)
+        systemSession?.locationBox.set(outgoing)
     }
 
     // MARK: - Interrupted Session Recovery
@@ -309,7 +315,15 @@ public final class RelocViewModel: ObservableObject {
     // MARK: - Device Pairing & Loopback Verification
 
     public var canStartSession: Bool {
-        savedPairing != nil && mfiSigner != nil && !snapshot.isRunning
+        guard savedPairing != nil, !snapshot.isRunning else { return false }
+        // Accessory NMEA injection needs an MFi signer; system-level simulation does not.
+        return locationMode.requiresMFiCredential ? mfiSigner != nil : true
+    }
+
+    /// True when "开始定位" is disabled and the reason is a missing MFi credential
+    /// in accessory mode (used by the UI to show an actionable hint).
+    public var isBlockedByMissingMFiCredential: Bool {
+        locationMode.requiresMFiCredential && mfiSigner == nil && savedPairing != nil
     }
 
     public var hasMFiCredential: Bool { mfiSigner != nil }
@@ -448,8 +462,15 @@ public final class RelocViewModel: ObservableObject {
             alertMessage = "请先在「设备连接」页面完成本机配对或导入配对文件，并确保外部代理已启用 10.7.0.1 回环映射。"
             return
         }
-        guard let mfiSigner else {
-            alertMessage = "内置配件认证组件不可用，请重新安装应用。"
+
+        // Only Remote Pairing records carry the identifier/authTag needed by the
+        // system-level simulation engine; Lockdown records do not.
+        guard case .remotePairing(let pairingData, _) = pairing else {
+            alertMessage = "系统级模拟需要 Remote Pairing 配对记录；请重新配对或导入 RPPairing 文件。"
+            return
+        }
+        if locationMode.requiresMFiCredential && mfiSigner == nil {
+            alertMessage = "配件注入模式需要 MFi 凭据，请在「设备连接 → 配件认证」导入，或切换到「系统级模拟」模式。"
             return
         }
 
@@ -464,6 +485,28 @@ public final class RelocViewModel: ObservableObject {
             startJitterTimer()
         }
 
+        keepAlive.start(useSilentAudio: backgroundKeepAliveEnabled)
+        coreLocation.requestAndStart()
+
+        switch locationMode {
+        case .accessory:
+            startAccessorySession(
+                mode: mode,
+                pairing: pairing,
+                pairingData: pairingData
+            )
+        case .system:
+            startSystemSession(pairingData: pairingData)
+        }
+    }
+
+    /// iAP2 / MFi-v3 / NMEA injection via the external loopback proxy.
+    private func startAccessorySession(
+        mode: SessionMode,
+        pairing: SavedPairing,
+        pairingData: Data
+    ) {
+        guard let mfiSigner else { return }
         let config = SessionConfiguration(
             host: host.trimmingCharacters(in: .whitespacesAndNewlines),
             remotePort: store.lastDiscoveredRemotePort ?? remotePort,
@@ -473,9 +516,6 @@ public final class RelocViewModel: ObservableObject {
             intervalSeconds: intervalSeconds,
             durationSeconds: mode == .probe ? max(20.0, durationSeconds) : durationSeconds
         )
-
-        keepAlive.start(useSilentAudio: backgroundKeepAliveEnabled)
-        coreLocation.requestAndStart()
 
         let newSession = AccessoryLocationSession(
             initialLocation: targetLocation,
@@ -496,6 +536,7 @@ public final class RelocViewModel: ObservableObject {
                         self.stopJitterTimer()
                         self.keepAlive.stop()
                         self.coreLocation.stop()
+                        self.session = nil
                     }
                 }
             },
@@ -522,18 +563,76 @@ public final class RelocViewModel: ObservableObject {
                 self.requestOpenLocationSettings = true
             }
         }
+        _ = pairingData
+    }
+
+    /// System-level LocationSimulation via the WrapPin native bridge. Needs the
+    /// full Bonjour service info (identifier + authTag), discovered on the WiFi link.
+    private func startSystemSession(pairingData: Data) {
+        Task { @MainActor in
+            let service = await RemotePairingDiscovery.discoverService(record: pairingData)
+                ?? RemotePairingServiceInfo(
+                    port: store.lastDiscoveredRemotePort ?? remotePort,
+                    host: host.trimmingCharacters(in: .whitespacesAndNewlines),
+                    identifier: "",
+                    authTag: ""
+                )
+            guard !service.identifier.isEmpty, !service.authTag.isEmpty else {
+                self.alertMessage = "无法发现这台 iPhone 的配对服务（系统级模拟需要 WiFi 下的 Bonjour 发现，且 pairing 记录需为本机配对）。"
+                self.stopJitterTimer()
+                self.keepAlive.stop()
+                self.coreLocation.stop()
+                return
+            }
+
+            let newSession = SystemLocationSession(
+                initialLocation: self.targetLocation,
+                onEvent: { [weak self] event in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        self.events.append(event)
+                        if self.events.count > 500 {
+                            self.events.removeFirst(self.events.count - 500)
+                        }
+                    }
+                },
+                onSnapshot: { [weak self] snap in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        self.snapshot = snap
+                        if !snap.isRunning {
+                            self.stopJitterTimer()
+                            self.keepAlive.stop()
+                            self.coreLocation.stop()
+                            self.systemSession = nil
+                        }
+                    }
+                }
+            )
+            self.systemSession = newSession
+            newSession.start(
+                pairingData: pairingData,
+                service: service,
+                initialLocation: self.targetLocation
+            )
+        }
     }
 
     public func stopAndRestore() {
         stopJitterTimer()
         session?.stop()
+        systemSession?.stop()
         keepAlive.stop()
         coreLocation.stop()
         store.saveInterruptedSession(nil)
         interruptedSession = nil
-        // 停止后引导到系统「定位服务」页：重新关闭再打开定位服务，
-        // 系统会清除注入的位置并切回本机真实 GPS。
-        requestOpenLocationSettings = true
+
+        // Accessory injection persists in the system location stack until the
+        // Location Services master switch is cycled, so guide the user there.
+        // System-level simulation is cleared by the FFI on stop; no jump needed.
+        if locationMode.requiresMFiCredential {
+            requestOpenLocationSettings = true
+        }
     }
 
     // MARK: - Pairing & Places Management

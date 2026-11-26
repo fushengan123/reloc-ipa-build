@@ -68,6 +68,8 @@ targets:
     dependencies:
       - framework: Vendor/RelocDeviceBridge.xcframework
         embed: false
+      - framework: Vendor/WrapPinPairingFFI.xcframework
+        embed: false
       - sdk: Security.framework
       - sdk: MapKit.framework
       - sdk: CoreLocation.framework

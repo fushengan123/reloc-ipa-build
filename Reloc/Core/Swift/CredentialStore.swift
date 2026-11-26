@@ -122,6 +122,39 @@ public enum PairingKind: String, Equatable, Sendable {
     case lockdown = "Lockdown"
 }
 
+/// The two location injection strategies offered by Reloc.
+/// - accessory: iAP2 / MFi-v3 / NMEA injection via the external 10.7.0.1 loopback proxy.
+/// - system: system-level LocationSimulation via the device tunnel (no MFi credential).
+public enum LocationMode: String, CaseIterable, Codable, Identifiable, Sendable {
+    case accessory
+    case system
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .accessory: return "配件注入（NMEA）"
+        case .system: return "系统级模拟"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .accessory:
+            return "iAP2 / MFi-v3 把 NMEA 注入配件定位；需 WiFi 回环与 MFi 凭据，停止后需手动开关定位服务恢复。"
+        case .system:
+            return "直接调用系统定位模拟服务；无需 MFi 凭据，停止即清除模拟位置，仍需设备回环通道与开发者模式。"
+        }
+    }
+
+    public var requiresMFiCredential: Bool {
+        switch self {
+        case .accessory: return true
+        case .system: return false
+        }
+    }
+}
+
 public enum SavedPairing: @unchecked Sendable {
     case remotePairing(data: Data, identifier: String)
     case lockdown(record: RLPairingRecord)
@@ -175,6 +208,7 @@ public final class CredentialStore {
         static let microJitter = "reloc.microJitter"
         static let appearance = "reloc.appearance"
         static let mapStyle = "reloc.mapStyle"
+        static let locationMode = "reloc.locationMode"
         static let favorites = "reloc.favorites"
         static let recents = "reloc.recents"
         static let interruptedSession = "reloc.interruptedSession"
@@ -290,6 +324,11 @@ public final class CredentialStore {
     public var microJitterEnabled: Bool {
         get { defaults.bool(forKey: Keys.microJitter) }
         set { defaults.set(newValue, forKey: Keys.microJitter) }
+    }
+
+    public var locationMode: LocationMode {
+        get { defaults.string(forKey: Keys.locationMode).flatMap(LocationMode.init) ?? .accessory }
+        set { defaults.set(newValue.rawValue, forKey: Keys.locationMode) }
     }
 
     public var appearanceMode: AppAppearanceMode {

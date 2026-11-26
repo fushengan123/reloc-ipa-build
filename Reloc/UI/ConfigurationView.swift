@@ -194,7 +194,9 @@ struct ConfigurationView: View {
                                 .font(.subheadline.weight(.semibold))
                             Text(viewModel.hasMFiCredential
                                  ? "已加载：\(viewModel.mFiCredentialSummary)"
-                                 : "未导入。开始定位需要 certificate.p7b 与 identity.pk8。")
+                                 : (viewModel.locationMode.requiresMFiCredential
+                                    ? "未导入。配件注入模式需要 certificate.p7b 与 identity.pk8。"
+                                    : "系统级模拟模式无需此凭据；仅配件注入模式需要。"))
                                 .font(.caption)
                                 .foregroundStyle(viewModel.hasMFiCredential ? RelocTheme.emerald : .secondary)
                         }
@@ -225,6 +227,28 @@ struct ConfigurationView: View {
                     Text("配件认证")
                 } footer: {
                     Text("凭据会保存在本应用私有目录，仅用于本地配件协议签名；私钥不会上传。")
+                }
+
+                Section {
+                    Picker(selection: $viewModel.locationMode) {
+                        ForEach(LocationMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    } label: {
+                        Label {
+                            Text("定位模式")
+                        } icon: {
+                            SettingsIconBadge(systemName: "location.north.line.fill", color: RelocTheme.accent)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(viewModel.snapshot.isRunning)
+
+                    Text(viewModel.locationMode.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("定位模式")
                 }
 
                 Section("定位选项") {
