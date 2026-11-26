@@ -64,7 +64,7 @@ struct ContentView: View {
                 LocationSettingsOpener.open()
             }
         } message: {
-            Text("即将打开「设置 → Reloc」。进入后点顶部的「位置 / 定位」，即可到达系统定位服务页；关闭再打开「定位服务」总开关可恢复真实 GPS。")
+            Text("即将打开「设置 → Reloc」。进入后点顶部的「位置 / 定位」即可到达系统定位服务页，把「定位服务」总开关关掉再打开，系统会清除注入/模拟的位置并恢复真实 GPS。")
         }
         // A modal presentation instead of an overlay: the system guarantees a
         // single cover, so no second layer can ever appear above or below it.
