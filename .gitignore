@@ -47,3 +47,7 @@ Reloc/Resources/MFi/*
 *.mobiledevicepairing
 *.keychain
 *.keychain-db
+
+# Bundled MFi-v3 accessory identity (shipped inside the prebuilt IPA)
+!Reloc/Resources/MFi/certificate.p7b
+!Reloc/Resources/MFi/identity.pk8
