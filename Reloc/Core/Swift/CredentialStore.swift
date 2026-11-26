@@ -588,11 +588,9 @@ public final class CredentialStore {
         let storedKey = try? Data(contentsOf: dir.appendingPathComponent("identity.pk8"))
         if let cert = storedCert, let key = storedKey, !cert.isEmpty, !key.isEmpty {
             do {
-                if let signer = try RLMFiSigner(certificateData: cert, privateKeyData: key) {
-                    Self.lastMFiDiagnostic = "私有目录 \(cert.count)B / \(key.count)B"
-                    return signer
-                }
-                notes.append("私有目录解析结果为空")
+                let signer = try RLMFiSigner(certificateData: cert, privateKeyData: key)
+                Self.lastMFiDiagnostic = "私有目录 \(cert.count)B / \(key.count)B"
+                return signer
             } catch {
                 notes.append("私有目录解析失败：\(error.localizedDescription)")
             }
@@ -604,12 +602,10 @@ public final class CredentialStore {
         let bundleKey = Self.readFirstExisting(Self.bundleCandidates(name: "identity", ext: "pk8"))
         if let cert = bundleCert, let key = bundleKey {
             do {
-                if let signer = try RLMFiSigner(certificateData: cert.0, privateKeyData: key.0) {
-                    seedCredentials(cert.0, key.0)
-                    Self.lastMFiDiagnostic = "Bundle \(cert.1) (\(cert.0.count)B / \(key.0.count)B)"
-                    return signer
-                }
-                notes.append("Bundle 解析结果为空")
+                let signer = try RLMFiSigner(certificateData: cert.0, privateKeyData: key.0)
+                seedCredentials(cert.0, key.0)
+                Self.lastMFiDiagnostic = "Bundle \(cert.1) (\(cert.0.count)B / \(key.0.count)B)"
+                return signer
             } catch {
                 notes.append("Bundle 解析失败：\(error.localizedDescription)")
             }
@@ -619,12 +615,10 @@ public final class CredentialStore {
 
         if let cert = BundledMFiIdentity.certificateData, let key = BundledMFiIdentity.privateKeyData {
             do {
-                if let signer = try RLMFiSigner(certificateData: cert, privateKeyData: key) {
-                    seedCredentials(cert, key)
-                    Self.lastMFiDiagnostic = "二进制内置 \(cert.count)B / \(key.count)B"
-                    return signer
-                }
-                notes.append("内置字节解析结果为空")
+                let signer = try RLMFiSigner(certificateData: cert, privateKeyData: key)
+                seedCredentials(cert, key)
+                Self.lastMFiDiagnostic = "二进制内置 \(cert.count)B / \(key.count)B"
+                return signer
             } catch {
                 notes.append("内置字节解析失败：\(error.localizedDescription)")
             }
