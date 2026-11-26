@@ -68,7 +68,16 @@ struct ContentView: View {
         }
         .overlay {
             if viewModel.cellularGuidance != .none {
-                CellularGuidanceCard(viewModel: viewModel)
+                ZStack {
+                    // Scrim keeps a single card legible and blocks taps behind it.
+                    Color.black.opacity(0.38)
+                        .ignoresSafeArea()
+                    CellularGuidanceCard(viewModel: viewModel)
+                        // Disable animation on the conditional swap: with animation
+                        // on, the outgoing and incoming cards coexist for a few
+                        // frames and look like two stacked popups.
+                        .transaction { $0.animation = nil }
+                }
             }
         }
         .onChange(of: scenePhase) { _, phase in
