@@ -48,7 +48,7 @@ public final class SystemLocationSession {
     ///   - pairingData: the Remote Pairing record bytes (`device.pairing.plist`).
     ///   - service: the Bonjour-validated Remote Pairing service info (port,
     ///     identifier, auth tag) discovered for the paired device.
-    public func start(
+    func start(
         pairingData: Data,
         service: RemotePairingServiceInfo,
         initialLocation: TargetLocation
