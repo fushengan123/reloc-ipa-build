@@ -509,7 +509,13 @@ public final class RelocViewModel: ObservableObject {
         )
 
         if case .send = mode {
-            requestOpenLocationSettings = true
+            // Opening Settings immediately backgrounds the app during the iAP2/NMEA
+            // handshake and can prevent the injection session from taking effect.
+            // Only offer the jump after the session is confirmed running.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+                guard let self, self.snapshot.isRunning else { return }
+                self.requestOpenLocationSettings = true
+            }
         }
     }
 
