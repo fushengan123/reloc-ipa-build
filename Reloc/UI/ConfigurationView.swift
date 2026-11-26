@@ -178,8 +178,10 @@ struct ConfigurationView: View {
                 } footer: {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("自动发现 Remote Pairing 服务并用配对记录验证广播身份，最终通过设备服务确认连接可用。")
-                        Text("需在 WiFi 下使用：设备端口靠局域网 Bonjour 发现，10.7.0.1 回环也由代理在 WiFi 下映射。蜂窝数据下通常无法连接；应用会复用上次在 WiFi 发现的端口，但不能保证连通。")
-                            .foregroundStyle(RelocTheme.amber)
+                        Text(viewModel.locationMode.requiresMFiCredential
+                             ? "需在 WiFi 下使用：设备端口靠局域网 Bonjour 发现，10.7.0.1 回环也由代理在 WiFi 下映射。蜂窝数据下通常无法连通。"
+                             : "系统级模拟支持蜂窝数据：若检测到你正在用蜂窝网络，开始定位后会引导你临时关闭数据以完成设备发现，成功后会提示恢复，定位继续走 5G。请保持代理的 10.7.0.1 隧道连接。")
+                            .foregroundStyle(viewModel.locationMode.requiresMFiCredential ? RelocTheme.amber : RelocTheme.emerald)
                     }
                 }
 
