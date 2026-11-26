@@ -900,12 +900,12 @@ public final class RelocViewModel: ObservableObject {
         store.saveInterruptedSession(nil)
         interruptedSession = nil
 
-        // Accessory injection persists in the system location stack until the
-        // Location Services master switch is cycled, so guide the user there.
-        // System-level simulation is cleared by the FFI on stop; no jump needed.
-        if locationMode.requiresMFiCredential {
-            requestOpenLocationSettings = true
-        }
+        // Both modes can leave the device holding an injected coordinate: NMEA
+        // injection persists in the location stack, and the system simulation
+        // only clears when the underlying DVT session is torn down. Cycling the
+        // Location Services master switch always restores the real GPS, so offer
+        // that path in either mode.
+        requestOpenLocationSettings = true
     }
 
     // MARK: - Pairing & Places Management
