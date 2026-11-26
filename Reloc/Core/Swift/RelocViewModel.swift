@@ -373,6 +373,10 @@ public final class RelocViewModel: ObservableObject {
 
     public var hasMFiCredential: Bool { mfiSigner != nil }
 
+    /// Bumped by `reloadMFiCredential()` so SwiftUI re-evaluates the computed
+    /// credential properties even though `mfiSigner` itself is not @Published.
+    @Published public var mfiReloadToken: Int = 0
+
     public var mFiCredentialSummary: String {
         mfiSigner?.leafSubjectSummary ?? "未导入"
     }
@@ -384,9 +388,17 @@ public final class RelocViewModel: ObservableObject {
         CredentialStore.lastMFiDiagnostic
     }
 
+    /// Injected by CI into Info.plist so the running build can be identified
+    /// from inside the app — otherwise "I installed the new one" is unverifiable.
+    public var buildStamp: String {
+        (Bundle.main.infoDictionary?["RelocBuildStamp"] as? String) ?? "未注入（本地构建）"
+    }
+
     /// Re-reads the credential from disk/bundle/binary without restarting.
     public func reloadMFiCredential() {
         mfiSigner = store.loadMFiSigner()
+        // `mfiSigner` is not @Published, so bump a token to force a re-render.
+        mfiReloadToken &+= 1
     }
 
     public func importMFiCredentials(certificateURL: URL, privateKeyURL: URL) {
