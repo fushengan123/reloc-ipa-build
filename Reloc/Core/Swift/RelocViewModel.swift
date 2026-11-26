@@ -695,12 +695,11 @@ public final class RelocViewModel: ObservableObject {
                 guard !Task.isCancelled, self.cellularGuidance == .turnOffData else { return }
                 if let service, !service.identifier.isEmpty, !service.authTag.isEmpty {
                     self.cellularDiscoveryLoopTask = nil
+                    // Stay on the "turn data off" card until the native session
+                    // actually reports running. Switching to "you may restore
+                    // data" here would claim success before the session exists.
+                    self.cellularDiscoveryStatus = "已发现设备，正在建立定位模拟…"
                     self.launchSystemSession(pairingData: pairingData, service: service)
-                    // Clear the probing text first: leaving it set makes the new
-                    // card render alongside the previous step's wording and reads
-                    // as two contradictory popups.
-                    self.cellularDiscoveryStatus = ""
-                    self.cellularGuidance = .turnBackOnData
                     return
                 }
                 try? await Task.sleep(for: .milliseconds(1200))
@@ -736,13 +735,20 @@ public final class RelocViewModel: ObservableObject {
                 Task { @MainActor in
                     guard let self else { return }
                     self.snapshot = snap
-                    guard !snap.isRunning else {
+                    if snap.isRunning {
                         self.systemSessionWasRunning = true
+                        // Only now is the location genuinely established, so this
+                        // is the only place allowed to ask for mobile data back.
+                        if self.cellularGuidance == .turnOffData {
+                            self.cellularDiscoveryStatus = ""
+                            self.cellularGuidance = .turnBackOnData
+                        }
                         return
                     }
-                    // Only a session that actually ran can "drop". Start-up
-                    // snapshots are already isRunning == false.
-                    guard self.systemSessionWasRunning else { return }
+                    // A session that already ran, or one that reported an error,
+                    // counts as a failure. A silent start-up snapshot does not.
+                    let hadError = !(snap.lastError?.isEmpty ?? true)
+                    guard self.systemSessionWasRunning || hadError else { return }
                     self.systemSessionWasRunning = false
                     self.stopJitterTimer()
                     self.keepAlive.stop()
