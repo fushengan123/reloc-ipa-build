@@ -17,10 +17,14 @@ jobs:
       - name: Stamp build identity
         run: |
           STAMP="$(date -u +%Y%m%d-%H%M)-$(echo "${GITHUB_SHA}" | cut -c1-7)"
-          echo "build stamp: ${STAMP}"
+          SHORT="$(date -u +%m%d-%H%M)"
+          echo "build stamp: ${STAMP} / icon label: Reloc ${SHORT}"
           echo "STAMP=${STAMP}" >> "$GITHUB_ENV"
           sed -i '' "s|RelocBuildStamp: \"dev-local\"|RelocBuildStamp: \"${STAMP}\"|" project.yml
-          grep -n "RelocBuildStamp" project.yml
+          # Put the build label on the home screen so the installed build is
+          # identifiable without opening the app.
+          sed -i '' "s|CFBundleDisplayName: Reloc|CFBundleDisplayName: Reloc ${SHORT}|" project.yml
+          grep -n "RelocBuildStamp\|CFBundleDisplayName" project.yml
 
       - name: Generate Xcode project
         run: xcodegen generate
