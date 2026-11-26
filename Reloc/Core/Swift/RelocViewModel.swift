@@ -888,8 +888,13 @@ public final class RelocViewModel: ObservableObject {
         cellularGuidance = .none
         cellularDiscoveryStatus = ""
         session?.stop()
-        systemSession?.stop()
+        let stopIssued = systemSession?.stop() ?? false
         systemSession = nil
+        if locationMode == .system && !stopIssued {
+            // The live handle was already gone, so no cancel could reach the
+            // device. Say so instead of pretending the stop succeeded.
+            alertMessage = "系统定位会话已结束，停止指令没能发到设备。若位置仍停在模拟点，请重新开始定位后立刻点「停止并恢复」。"
+        }
         keepAlive.stop()
         coreLocation.stop()
         store.saveInterruptedSession(nil)
