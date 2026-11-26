@@ -16,7 +16,8 @@ import SwiftUI
 ///                     data OFF while a discovery loop probes in the background.
 ///                     Returning to foreground or tapping "开始定位" probes now.
 ///   turnBackOnData -> session established; card asks to restore mobile data.
-///   connectionHelp -> discovery failed even after the workaround.
+///   connectionHelp -> reserved; not entered by the current flow. Failure states
+///                     stay on `turnOffData` so only one card can ever be shown.
 public enum CellularGuidance: Equatable, Sendable {
     case none
     case turnOffData
@@ -145,6 +146,12 @@ public final class RelocViewModel: ObservableObject {
     private var mfiSigner: RLMFiSigner?
     private var session: AccessoryLocationSession?
     private var systemSession: SystemLocationSession?
+    /// Tracks whether the system session ever reported "running". Early
+    /// snapshots arrive with isRunning == false; without this guard the UI
+    /// would treat startup as a disconnect and swap cards immediately.
+    private var systemSessionWasRunning = false
+    /// Bounds automatic reconnects so a session that fails instantly cannot spin.
+    private var systemSessionRestartCount = 0
     private var jitterTimer: Timer?
 
     public init() {
@@ -643,6 +650,7 @@ public final class RelocViewModel: ObservableObject {
     /// device service resolves again.
     private func startSystemSession(pairingData: Data) {
         pendingSystemPairingData = pairingData
+        systemSessionRestartCount = 0
         cellularDiscoveryStatus = "正在检测网络…"
         Task { @MainActor in
             // Let NWPathMonitor deliver its first path update before deciding.
@@ -698,8 +706,10 @@ public final class RelocViewModel: ObservableObject {
                 try? await Task.sleep(for: .milliseconds(1200))
             }
             guard !Task.isCancelled, self.cellularGuidance == .turnOffData else { return }
-            self.cellularGuidance = .connectionHelp
-            self.cellularDiscoveryStatus = "多次尝试仍未发现设备。请确认代理隧道已连接且蜂窝数据已关闭，然后重试。"
+            // Keep the same card. The location is still not established, so the
+            // only message allowed is "turn mobile data off" plus a retry hint —
+            // never a second panel that would cover it.
+            self.cellularDiscoveryStatus = "多次尝试仍未发现设备。请确认代理隧道已连接、蜂窝数据已关闭，然后点「继续」。"
             self.abortSystemStart()
         }
     }
@@ -710,6 +720,7 @@ public final class RelocViewModel: ObservableObject {
         // reporting snapshots and the guidance state flips back and forth.
         systemSession?.stop()
         systemSession = nil
+        systemSessionWasRunning = false
         let newSession = SystemLocationSession(
             initialLocation: self.targetLocation,
             onEvent: { [weak self] event in
@@ -725,18 +736,31 @@ public final class RelocViewModel: ObservableObject {
                 Task { @MainActor in
                     guard let self else { return }
                     self.snapshot = snap
-                    if !snap.isRunning {
-                        self.stopJitterTimer()
-                        self.keepAlive.stop()
-                        self.coreLocation.stop()
-                        self.systemSession = nil
-                        // Do not leave the "you may restore mobile data" card on
-                        // screen after the session died — it would sit on top of
-                        // the "turn data off" card on the next attempt.
-                        if self.cellularGuidance == .turnBackOnData {
-                            self.cellularGuidance = .connectionHelp
-                            self.cellularDiscoveryStatus = "定位模拟已中断，请重试。"
-                        }
+                    guard !snap.isRunning else {
+                        self.systemSessionWasRunning = true
+                        return
+                    }
+                    // Only a session that actually ran can "drop". Start-up
+                    // snapshots are already isRunning == false.
+                    guard self.systemSessionWasRunning else { return }
+                    self.systemSessionWasRunning = false
+                    self.stopJitterTimer()
+                    self.keepAlive.stop()
+                    self.coreLocation.stop()
+                    self.systemSession = nil
+                    // The card must never branch into a second message: as long as
+                    // the location is not established the only card is
+                    // "turn mobile data off". So fall back to that state and
+                    // resume discovery instead of showing a separate
+                    // "session interrupted" panel on top of it.
+                    if let data = self.pendingSystemPairingData, self.systemSessionRestartCount < 2 {
+                        self.systemSessionRestartCount += 1
+                        self.cellularGuidance = .turnOffData
+                        self.cellularDiscoveryStatus = "定位模拟中断，正在重新检测这台 iPhone…"
+                        self.startCellularDiscoveryLoop(pairingData: data)
+                    } else {
+                        self.cellularGuidance = .turnOffData
+                        self.cellularDiscoveryStatus = "定位模拟多次中断。请确认代理隧道与配对记录后，点「继续」重试。"
                     }
                 }
             }
@@ -778,7 +802,8 @@ public final class RelocViewModel: ObservableObject {
             Task { @MainActor in
                 let service = await RemotePairingDiscovery.discoverService(record: data)
                 guard let service, !service.identifier.isEmpty, !service.authTag.isEmpty else {
-                    self.cellularGuidance = .connectionHelp
+                    self.cellularGuidance = .turnOffData
+                    self.cellularDiscoveryStatus = "未发现本机配对服务。请确认代理隧道已连接 10.7.0.1 回环，然后点「继续」。"
                     self.abortSystemStart()
                     return
                 }
