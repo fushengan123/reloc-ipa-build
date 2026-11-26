@@ -180,7 +180,7 @@ struct ConfigurationView: View {
                         Text("自动发现 Remote Pairing 服务并用配对记录验证广播身份，最终通过设备服务确认连接可用。")
                         Text(viewModel.locationMode.requiresMFiCredential
                              ? "需在 WiFi 下使用：设备端口靠局域网 Bonjour 发现，10.7.0.1 回环也由代理在 WiFi 下映射。蜂窝数据下通常无法连通。"
-                             : "系统级模拟支持蜂窝数据：点击「开始定位」后若检测到蜂窝网络，会提示你暂时关闭蜂窝数据（保持代理 10.7.0.1 隧道）；关掉数据回到 App 会自动发现设备，也可点「继续」；定位成功后会提示重新开启蜂窝网络，模拟继续走 5G。")
+                             : "系统级模拟支持蜂窝数据：点击「开始定位」后，只要定位还没开启成功，就会提示你先关闭蜂窝网络（保持代理 10.7.0.1 隧道）；关掉后回到 App 会自动发现设备，也可点「继续」；定位成功后会提示重新开启蜂窝网络，模拟继续走 5G。")
                             .foregroundStyle(viewModel.locationMode.requiresMFiCredential ? RelocTheme.amber : RelocTheme.emerald)
                     }
                 }
