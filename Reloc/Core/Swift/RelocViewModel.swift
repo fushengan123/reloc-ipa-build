@@ -377,6 +377,18 @@ public final class RelocViewModel: ObservableObject {
         mfiSigner?.leafSubjectSummary ?? "未导入"
     }
 
+    /// Where the credential came from (or why loading failed), shown under the
+    /// MFi row in Settings. Without this the UI can only say "未导入", which
+    /// hides whether the cause is a missing file or an unparsable one.
+    public var mFiCredentialDiagnostic: String {
+        CredentialStore.lastMFiDiagnostic
+    }
+
+    /// Re-reads the credential from disk/bundle/binary without restarting.
+    public func reloadMFiCredential() {
+        mfiSigner = store.loadMFiSigner()
+    }
+
     public func importMFiCredentials(certificateURL: URL, privateKeyURL: URL) {
         let certAccessed = certificateURL.startAccessingSecurityScopedResource()
         let keyAccessed = privateKeyURL.startAccessingSecurityScopedResource()
