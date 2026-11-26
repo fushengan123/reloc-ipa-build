@@ -201,6 +201,12 @@ public final class CredentialStore {
         appSupportDir.appendingPathComponent("pairing.mobiledevicepairing")
     }
 
+    private var mfiCredentialsDir: URL {
+        let dir = appSupportDir.appendingPathComponent("MFi", isDirectory: true)
+        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
     // MARK: - Connection & Behavior Settings
 
     public var host: String {
@@ -468,5 +474,26 @@ public final class CredentialStore {
             return nil
         }
         return try? RLMFiSigner(certificateData: certData, privateKeyData: keyData)
+    }
+
+    /// Bundle credentials take priority; otherwise use credentials imported at runtime.
+    public func loadMFiSigner() -> RLMFiSigner? {
+        if let bundled = loadBundledMFiSigner() { return bundled }
+        let dir = mfiCredentialsDir
+        guard let certData = try? Data(contentsOf: dir.appendingPathComponent("certificate.p7b")),
+              let keyData = try? Data(contentsOf: dir.appendingPathComponent("identity.pk8")) else {
+            return nil
+        }
+        return try? RLMFiSigner(certificateData: certData, privateKeyData: keyData)
+    }
+
+    /// Validates before persisting so invalid files never overwrite a working identity.
+    @discardableResult
+    public func importMFiCredentials(certificateData: Data, privateKeyData: Data) throws -> RLMFiSigner {
+        let signer = try RLMFiSigner(certificateData: certificateData, privateKeyData: privateKeyData)
+        let dir = mfiCredentialsDir
+        try certificateData.write(to: dir.appendingPathComponent("certificate.p7b"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try privateKeyData.write(to: dir.appendingPathComponent("identity.pk8"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        return signer
     }
 }

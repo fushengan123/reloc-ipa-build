@@ -11,6 +11,7 @@ struct ConfigurationView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var showImporter = false
+    @State private var showMFiImporter = false
     @State private var copiedPinToast = false
 
     private var serviceStateText: String {
@@ -163,6 +164,34 @@ struct ConfigurationView: View {
                     Text("自动发现 Remote Pairing 服务并用配对记录验证广播身份，最终通过设备服务确认连接可用。")
                 }
 
+                Section("配件认证") {
+                    HStack(spacing: 12) {
+                        SettingsIconBadge(
+                            systemName: viewModel.hasMFiCredential ? "checkmark.seal.fill" : "exclamationmark.triangle.fill",
+                            color: viewModel.hasMFiCredential ? RelocTheme.emerald : RelocTheme.amber
+                        )
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("MFi-v3 凭据")
+                                .font(.subheadline.weight(.semibold))
+                            Text(viewModel.hasMFiCredential
+                                 ? "已加载：\(viewModel.mFiCredentialSummary)"
+                                 : "未导入。开始定位需要 certificate.p7b 与 identity.pk8。")
+                                .font(.caption)
+                                .foregroundStyle(viewModel.hasMFiCredential ? RelocTheme.emerald : .secondary)
+                        }
+                        Spacer()
+                    }
+
+                    Button {
+                        showMFiImporter = true
+                    } label: {
+                        Label("导入 MFi 凭据（同时选两个文件）", systemImage: "square.and.arrow.down.on.square")
+                    }
+                    .disabled(viewModel.snapshot.isRunning)
+                } footer: {
+                    Text("凭据会保存在本应用私有目录，仅用于本地配件协议签名；私钥不会上传。")
+                }
+
                 Section("定位选项") {
                     Stepper(value: $viewModel.intervalSeconds, in: 1.0...10.0, step: 0.5) {
                         Label {
@@ -259,6 +288,20 @@ struct ConfigurationView: View {
             ) { result in
                 guard case .success(let urls) = result, let url = urls.first else { return }
                 viewModel.importPairingFile(url: url)
+            }
+            .fileImporter(
+                isPresented: $showMFiImporter,
+                allowedContentTypes: [.data, .item],
+                allowsMultipleSelection: true
+            ) { result in
+                guard case .success(let urls) = result else { return }
+                let cert = urls.first { $0.pathExtension.lowercased() == "p7b" }
+                let key = urls.first { $0.pathExtension.lowercased() == "pk8" }
+                guard let cert, let key else {
+                    viewModel.alertMessage = "请同时选择 certificate.p7b 和 identity.pk8 两个文件。"
+                    return
+                }
+                viewModel.importMFiCredentials(certificateURL: cert, privateKeyURL: key)
             }
         }
     }

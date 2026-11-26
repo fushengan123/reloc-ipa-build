@@ -386,7 +386,20 @@ struct MapPickerView: View {
                 }
             }
 
-            if !viewModel.pairingStatus.isLoaded {
+            if !viewModel.hasMFiCredential {
+                Button(action: switchToConfig) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(RelocTheme.amber)
+                        Text("缺少 MFi-v3 凭据，开始定位不可用。前往「设备连接 → 配件认证」导入")
+                            .font(.caption.weight(.semibold))
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+                    }
+                    .padding(10)
+                    .background(RelocTheme.amber.opacity(0.14), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .foregroundStyle(.primary)
+            } else if !viewModel.pairingStatus.isLoaded {
                 Button(action: switchToConfig) {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(RelocTheme.amber)

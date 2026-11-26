@@ -126,7 +126,7 @@ public final class RelocViewModel: ObservableObject {
         self.interruptedSession = store.loadInterruptedSession()
         self.deviceUDID = store.deviceUDID
 
-        self.mfiSigner = store.loadBundledMFiSigner()
+        self.mfiSigner = store.loadMFiSigner()
 
         let (pairing, pairStat) = store.loadPairing()
         self.savedPairing = pairing
@@ -310,6 +310,33 @@ public final class RelocViewModel: ObservableObject {
 
     public var canStartSession: Bool {
         savedPairing != nil && mfiSigner != nil && !snapshot.isRunning
+    }
+
+    public var hasMFiCredential: Bool { mfiSigner != nil }
+
+    public var mFiCredentialSummary: String {
+        mfiSigner?.leafSubjectSummary ?? "未导入"
+    }
+
+    public func importMFiCredentials(certificateURL: URL, privateKeyURL: URL) {
+        let certAccessed = certificateURL.startAccessingSecurityScopedResource()
+        let keyAccessed = privateKeyURL.startAccessingSecurityScopedResource()
+        defer {
+            if certAccessed { certificateURL.stopAccessingSecurityScopedResource() }
+            if keyAccessed { privateKeyURL.stopAccessingSecurityScopedResource() }
+        }
+        do {
+            let certData = try Data(contentsOf: certificateURL)
+            let keyData = try Data(contentsOf: privateKeyURL)
+            mfiSigner = try store.importMFiCredentials(certificateData: certData, privateKeyData: keyData)
+            alertMessage = "MFi 凭据已导入：\(mFiCredentialSummary)"
+            events.append(ProtocolEvent(
+                name: "mfi_credentials_imported",
+                detail: "{\"event\":\"mfi_credentials_imported\"}"
+            ))
+        } catch {
+            alertMessage = "MFi 凭据导入失败：\(error.localizedDescription)"
+        }
     }
 
     public func invalidateDeviceConnection() {
