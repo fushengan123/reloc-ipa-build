@@ -8,11 +8,20 @@ import SwiftUI
 /// workaround. On a pure cellular path iOS mDNSResponder does not answer local
 /// Bonjour queries, so the on-device Remote Pairing service cannot be found.
 /// Turning mobile data off briefly lets the local service resolve again.
+///
+/// The flow is an explicit three-step sequence, matching the original app:
+///   1) turnOffData    -> ask the user to switch mobile data OFF first
+///   2) readyToStart   -> data is off; user taps "Start" to begin discovery
+///      discovering    -> discovery loop running (still part of step 2)
+///   3) turnBackOnData -> session established; restore mobile data
+///   connectionHelp    -> discovery failed even after the workaround
 public enum CellularGuidance: Equatable, Sendable {
     case none
-    case turnOffData      // Ask the user to switch mobile data off briefly.
-    case turnBackOnData   // Session established; data may be restored.
-    case connectionHelp   // Discovery failed even after the workaround.
+    case turnOffData
+    case readyToStart
+    case discovering
+    case turnBackOnData
+    case connectionHelp
 }
 
 @MainActor
@@ -618,10 +627,11 @@ public final class RelocViewModel: ObservableObject {
             }
             let onCellular = self.isWiFiSatisfied == false
             if onCellular {
-                // Enter the mobile-data guidance flow and start probing in a loop.
+                // Step 1 of the original app's flow: ask the user to turn mobile
+                // data OFF *before* discovery starts. Do not probe yet — discovery
+                // must wait until the user confirms data is off and taps Start.
                 self.cellularGuidance = .turnOffData
-                self.cellularDiscoveryStatus = "蜂窝数据下无法直接发现设备。请按提示临时关闭蜂窝数据。"
-                self.startCellularDiscoveryLoop(pairingData: pairingData)
+                self.cellularDiscoveryStatus = "第 1 步：先关闭这台 iPhone 的蜂窝数据（保持代理 10.7.0.1 隧道连接）。"
             } else {
                 // WiFi (or unknown): one discovery attempt, then report result.
                 let service = await RemotePairingDiscovery.discoverService(record: pairingData)
@@ -637,34 +647,35 @@ public final class RelocViewModel: ObservableObject {
         }
     }
 
-    /// WrapPin-style loop: while in the "turn mobile data off" step, keep
-    /// re-running local Bonjour discovery every few seconds. Once the user
-    /// switches data off, mDNSResponder resolves the on-device service and we
-    /// establish the session immediately.
+    /// WrapPin-style loop: after the user has turned mobile data off and tapped
+    /// Start, keep re-running local Bonjour discovery every few seconds. Once
+    /// data is off, mDNSResponder resolves the on-device service and we establish
+    /// the session immediately.
     private func startCellularDiscoveryLoop(pairingData: Data) {
         cellularDiscoveryLoopTask?.cancel()
+        cellularGuidance = .discovering
         cellularDiscoveryLoopTask = Task { @MainActor in
             // Bound the wait so a stuck device cannot spin forever.
             for attempt in 1...45 {
                 guard !Task.isCancelled,
-                      self.cellularGuidance == .turnOffData,
+                      self.cellularGuidance == .discovering,
                       self.pendingSystemPairingData != nil else { return }
                 self.cellularDiscoveryStatus = "正在发现本机设备（第 \(attempt) 次）…"
                 let service = await RemotePairingDiscovery.discoverService(record: pairingData)
-                guard !Task.isCancelled, self.cellularGuidance == .turnOffData else { return }
+                guard !Task.isCancelled, self.cellularGuidance == .discovering else { return }
                 if let service, !service.identifier.isEmpty, !service.authTag.isEmpty {
                     self.cellularDiscoveryLoopTask = nil
                     self.launchSystemSession(pairingData: pairingData, service: service)
-                    // Session is up; tell the user mobile data may be restored.
+                    // Session is up; step 3 — tell the user data may be restored.
                     self.cellularGuidance = .turnBackOnData
-                    self.cellularDiscoveryStatus = "定位已建立，可恢复蜂窝数据，5G 下会继续模拟。"
+                    self.cellularDiscoveryStatus = "第 3 步：定位已建立，现在可以重新打开蜂窝数据，5G 下会继续模拟。"
                     return
                 }
                 try? await Task.sleep(for: .milliseconds(1200))
             }
-            guard !Task.isCancelled, self.cellularGuidance == .turnOffData else { return }
+            guard !Task.isCancelled, self.cellularGuidance == .discovering else { return }
             self.cellularGuidance = .connectionHelp
-            self.cellularDiscoveryStatus = "多次尝试仍未发现设备。请确认代理隧道已连接，然后重试。"
+            self.cellularDiscoveryStatus = "多次尝试仍未发现设备。请确认代理隧道已连接且蜂窝数据已关闭，然后重试。"
             self.abortSystemStart()
         }
     }
@@ -711,22 +722,30 @@ public final class RelocViewModel: ObservableObject {
 
     // MARK: - Cellular guidance user actions
 
-    /// User reports mobile data is now off (or returns from Control Center).
-    /// Kick an immediate discovery pass; the loop also keeps probing.
+    /// Step 1 -> Step 2. The user confirms mobile data is now off; we simply
+    /// advance to the "tap Start" step and do NOT probe yet.
     public func userDidTurnOffMobileData() {
-        guard let data = pendingSystemPairingData, cellularGuidance == .turnOffData else { return }
+        guard cellularGuidance == .turnOffData, pendingSystemPairingData != nil else { return }
+        cellularGuidance = .readyToStart
+        cellularDiscoveryStatus = "第 2 步：点「开始定位」，App 会发现设备并建立定位模拟。"
+    }
+
+    /// Step 2 -> discovery. Only this explicit Start action begins probing,
+    /// matching the original app where discovery starts after the user taps.
+    public func confirmCellularStart() {
+        guard cellularGuidance == .readyToStart, let data = pendingSystemPairingData else { return }
         startCellularDiscoveryLoop(pairingData: data)
     }
 
-    /// Retry from the connection-help state.
+    /// Retry from the connection-help state — go back to step 1 so the whole
+    /// turn-off -> start -> restore sequence is repeated in the original order.
     public func retryCellularConnection() {
         cellularGuidance = .none
         guard let data = pendingSystemPairingData else { return }
         let onCellular = isWiFiSatisfied == false
         if onCellular {
             cellularGuidance = .turnOffData
-            cellularDiscoveryStatus = "请临时关闭蜂窝数据，App 会自动发现设备。"
-            startCellularDiscoveryLoop(pairingData: data)
+            cellularDiscoveryStatus = "第 1 步：先关闭这台 iPhone 的蜂窝数据（保持代理 10.7.0.1 隧道连接）。"
         } else {
             Task { @MainActor in
                 let service = await RemotePairingDiscovery.discoverService(record: data)
@@ -747,10 +766,12 @@ public final class RelocViewModel: ObservableObject {
         cellularDiscoveryStatus = ""
     }
 
-    /// Called when the app returns to the foreground so the cellular loop can
-    /// resume right away after the user toggles data in Control Center.
+    /// Called when the app returns to the foreground. We intentionally do NOT
+    /// auto-start discovery here — the original flow requires the user to tap
+    /// Start in step 2. If a discovery loop was already running, simply resume
+    /// it by issuing one immediate pass.
     public func appDidBecomeActive() {
-        guard cellularGuidance == .turnOffData, let data = pendingSystemPairingData else { return }
+        guard cellularGuidance == .discovering, let data = pendingSystemPairingData else { return }
         startCellularDiscoveryLoop(pairingData: data)
     }
 
