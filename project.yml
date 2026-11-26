@@ -32,6 +32,7 @@ targets:
         CFBundleDisplayName: Reloc
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
+        RelocBuildStamp: "dev-local"
         LSRequiresIPhoneOS: true
         LSSupportsOpeningDocumentsInPlace: true
         UIFileSharingEnabled: true
