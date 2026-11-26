@@ -520,28 +520,120 @@ public final class CredentialStore {
 
     // MARK: - Internal Bundled MFi Signer
 
-    public func loadBundledMFiSigner() -> RLMFiSigner? {
+    /// Human-readable record of the last credential load attempt, surfaced in
+    /// Settings so a failure is diagnosable on-device instead of reading "未导入".
+    public private(set) static var lastMFiDiagnostic = "尚未尝试加载"
+
+    /// Every layout a repack or clone could plausibly produce.
+    /// `url(forResource:subdirectory:)` alone is not enough: folder references
+    /// resolve differently from flat copies, and some sideload tools flatten
+    /// the bundle root.
+    private static func bundleCandidates(name: String, ext: String) -> [URL] {
         let bundle = Bundle.main
-        guard let certURL = bundle.url(forResource: "certificate", withExtension: "p7b", subdirectory: "MFi")
-                ?? bundle.url(forResource: "certificate", withExtension: "p7b"),
-              let keyURL = bundle.url(forResource: "identity", withExtension: "pk8", subdirectory: "MFi")
-                ?? bundle.url(forResource: "identity", withExtension: "pk8"),
-              let certData = try? Data(contentsOf: certURL),
-              let keyData = try? Data(contentsOf: keyURL) else {
-            return nil
+        var urls: [URL] = []
+        if let url = bundle.url(forResource: name, withExtension: ext, subdirectory: "MFi") {
+            urls.append(url)
         }
-        return try? RLMFiSigner(certificateData: certData, privateKeyData: keyData)
+        if let url = bundle.url(forResource: name, withExtension: ext, subdirectory: "Resources/MFi") {
+            urls.append(url)
+        }
+        if let url = bundle.url(forResource: name, withExtension: ext) {
+            urls.append(url)
+        }
+        for root in [bundle.resourceURL, bundle.bundleURL].compactMap({ $0 }) {
+            urls.append(root.appendingPathComponent("MFi/\(name).\(ext)"))
+            urls.append(root.appendingPathComponent("Resources/MFi/\(name).\(ext)"))
+            urls.append(root.appendingPathComponent("\(name).\(ext)"))
+        }
+        return urls
     }
 
-    /// Bundle credentials take priority; otherwise use credentials imported at runtime.
-    public func loadMFiSigner() -> RLMFiSigner? {
-        if let bundled = loadBundledMFiSigner() { return bundled }
-        let dir = mfiCredentialsDir
-        guard let certData = try? Data(contentsOf: dir.appendingPathComponent("certificate.p7b")),
-              let keyData = try? Data(contentsOf: dir.appendingPathComponent("identity.pk8")) else {
+    public func loadBundledMFiSigner() -> RLMFiSigner? {
+        guard let cert = Self.readFirstExisting(Self.bundleCandidates(name: "certificate", ext: "p7b")),
+              let key = Self.readFirstExisting(Self.bundleCandidates(name: "identity", ext: "pk8")) else {
             return nil
         }
-        return try? RLMFiSigner(certificateData: certData, privateKeyData: keyData)
+        return try? RLMFiSigner(certificateData: cert.0, privateKeyData: key.0)
+    }
+
+    private static func readFirstExisting(_ urls: [URL]) -> (Data, String)? {
+        let manager = FileManager.default
+        for url in urls {
+            guard manager.fileExists(atPath: url.path) else { continue }
+            if let data = try? Data(contentsOf: url), !data.isEmpty {
+                let label = url.path.replacingOccurrences(of: Bundle.main.bundlePath + "/", with: "")
+                return (data, label)
+            }
+        }
+        return nil
+    }
+
+    private func seedCredentials(_ cert: Data, _ key: Data) {
+        let dir = mfiCredentialsDir
+        try? cert.write(to: dir.appendingPathComponent("certificate.p7b"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try? key.write(to: dir.appendingPathComponent("identity.pk8"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    }
+
+    /// Loads the accessory identity in priority order:
+    /// 1. files already seeded/imported into Application Support;
+    /// 2. files inside the app bundle (several candidate layouts);
+    /// 3. bytes compiled into the executable (immune to packaging issues).
+    /// Whichever source wins is copied into Application Support, so later
+    /// launches never depend on bundle layout again.
+    public func loadMFiSigner() -> RLMFiSigner? {
+        var notes: [String] = []
+        let dir = mfiCredentialsDir
+
+        let storedCert = try? Data(contentsOf: dir.appendingPathComponent("certificate.p7b"))
+        let storedKey = try? Data(contentsOf: dir.appendingPathComponent("identity.pk8"))
+        if let cert = storedCert, let key = storedKey, !cert.isEmpty, !key.isEmpty {
+            do {
+                if let signer = try RLMFiSigner(certificateData: cert, privateKeyData: key) {
+                    Self.lastMFiDiagnostic = "私有目录 \(cert.count)B / \(key.count)B"
+                    return signer
+                }
+                notes.append("私有目录解析结果为空")
+            } catch {
+                notes.append("私有目录解析失败：\(error.localizedDescription)")
+            }
+            try? fileManager.removeItem(at: dir.appendingPathComponent("certificate.p7b"))
+            try? fileManager.removeItem(at: dir.appendingPathComponent("identity.pk8"))
+        }
+
+        let bundleCert = Self.readFirstExisting(Self.bundleCandidates(name: "certificate", ext: "p7b"))
+        let bundleKey = Self.readFirstExisting(Self.bundleCandidates(name: "identity", ext: "pk8"))
+        if let cert = bundleCert, let key = bundleKey {
+            do {
+                if let signer = try RLMFiSigner(certificateData: cert.0, privateKeyData: key.0) {
+                    seedCredentials(cert.0, key.0)
+                    Self.lastMFiDiagnostic = "Bundle \(cert.1) (\(cert.0.count)B / \(key.0.count)B)"
+                    return signer
+                }
+                notes.append("Bundle 解析结果为空")
+            } catch {
+                notes.append("Bundle 解析失败：\(error.localizedDescription)")
+            }
+        } else {
+            notes.append("Bundle 内未找到 MFi 文件")
+        }
+
+        if let cert = BundledMFiIdentity.certificateData, let key = BundledMFiIdentity.privateKeyData {
+            do {
+                if let signer = try RLMFiSigner(certificateData: cert, privateKeyData: key) {
+                    seedCredentials(cert, key)
+                    Self.lastMFiDiagnostic = "二进制内置 \(cert.count)B / \(key.count)B"
+                    return signer
+                }
+                notes.append("内置字节解析结果为空")
+            } catch {
+                notes.append("内置字节解析失败：\(error.localizedDescription)")
+            }
+        } else {
+            notes.append("内置字节缺失")
+        }
+
+        Self.lastMFiDiagnostic = notes.joined(separator: "；")
+        return nil
     }
 
     /// Validates before persisting so invalid files never overwrite a working identity.
