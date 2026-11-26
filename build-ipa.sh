@@ -20,6 +20,6 @@ xcodebuild build \
 
 mkdir -p build/Payload
 cp -R build/DerivedData/Build/Products/Release-iphoneos/Reloc.app build/Payload/
-(cd build && zip -qry Reloc.ipa Payload)
+(cd build && zip -qry Reloc-ready.ipa Payload)
 
-echo "IPA: $(pwd)/build/Reloc.ipa"
+echo "IPA: $(pwd)/build/Reloc-ready.ipa"
