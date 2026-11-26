@@ -66,19 +66,21 @@ struct ContentView: View {
         } message: {
             Text("即将打开「设置 → Reloc」。进入后点顶部的「位置 / 定位」，即可到达系统定位服务页；关闭再打开「定位服务」总开关可恢复真实 GPS。")
         }
-        .overlay {
-            if viewModel.cellularGuidance != .none {
-                ZStack {
-                    // Scrim keeps a single card legible and blocks taps behind it.
-                    Color.black.opacity(0.38)
-                        .ignoresSafeArea()
-                    CellularGuidanceCard(viewModel: viewModel)
-                        // Disable animation on the conditional swap: with animation
-                        // on, the outgoing and incoming cards coexist for a few
-                        // frames and look like two stacked popups.
-                        .transaction { $0.animation = nil }
-                }
+        // A modal presentation instead of an overlay: the system guarantees a
+        // single cover, so no second layer can ever appear above or below it.
+        .fullScreenCover(isPresented: Binding(
+            get: { viewModel.cellularGuidance != .none },
+            set: { presented in
+                if !presented { viewModel.dismissCellularGuidance() }
             }
+        )) {
+            ZStack {
+                Color.black.opacity(0.38)
+                    .ignoresSafeArea()
+                CellularGuidanceCard(viewModel: viewModel)
+                    .transaction { $0.animation = nil }
+            }
+            .presentationBackground(.clear)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { viewModel.appDidBecomeActive() }
