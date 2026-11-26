@@ -625,26 +625,22 @@ public final class RelocViewModel: ObservableObject {
             if self.isWiFiSatisfied == nil {
                 try? await Task.sleep(for: .milliseconds(600))
             }
-            let onCellular = self.isWiFiSatisfied == false
-            if onCellular {
-                // Original app behaviour: keep the "turn data off" card up and
-                // probe in the background the whole time. Once the user switches
-                // data off (or returns to the app), mDNS resolves and we connect.
-                self.cellularGuidance = .turnOffData
-                self.cellularDiscoveryStatus = "检测到蜂窝网络。请暂时关闭这台 iPhone 的蜂窝数据（保持代理 10.7.0.1 隧道连接）；正在检测这台 iPhone…"
-                self.startCellularDiscoveryLoop(pairingData: pairingData)
-            } else {
-                // WiFi (or unknown): one discovery attempt, then report result.
+            if self.isWiFiSatisfied == true {
+                // WiFi: try one quiet discovery first — no guidance card if it works.
                 let service = await RemotePairingDiscovery.discoverService(record: pairingData)
-                guard let service, !service.identifier.isEmpty, !service.authTag.isEmpty else {
-                    self.cellularGuidance = .connectionHelp
-                    self.cellularDiscoveryStatus = "未发现本机配对服务。请确认代理隧道已连接 10.7.0.1 回环，且配对文件为本机配对。"
-                    self.abortSystemStart()
+                if let service, !service.identifier.isEmpty, !service.authTag.isEmpty {
+                    self.cellularGuidance = .none
+                    self.launchSystemSession(pairingData: pairingData, service: service)
                     return
                 }
-                self.cellularGuidance = .none
-                self.launchSystemSession(pairingData: pairingData, service: service)
             }
+            // Cellular, unknown network, or a failed first discovery: whenever
+            // the location is not established, the card must ask the user to
+            // switch mobile data OFF first, then keep probing in the background
+            // (original app behaviour). Once data is off mDNS resolves and we connect.
+            self.cellularGuidance = .turnOffData
+            self.cellularDiscoveryStatus = "请先关闭这台 iPhone 的蜂窝网络（保持代理 10.7.0.1 隧道连接）；正在检测这台 iPhone…"
+            self.startCellularDiscoveryLoop(pairingData: pairingData)
         }
     }
 
@@ -661,7 +657,7 @@ public final class RelocViewModel: ObservableObject {
                 guard !Task.isCancelled,
                       self.cellularGuidance == .turnOffData,
                       self.pendingSystemPairingData != nil else { return }
-                self.cellularDiscoveryStatus = "正在检测这台 iPhone…（第 \(attempt) 次）\n请暂时关闭蜂窝网络，保持代理 10.7.0.1 隧道连接。"
+                self.cellularDiscoveryStatus = "正在检测这台 iPhone…（第 \(attempt) 次）\n请先关闭蜂窝网络，保持代理 10.7.0.1 隧道连接。"
                 let service = await RemotePairingDiscovery.discoverService(record: pairingData)
                 guard !Task.isCancelled, self.cellularGuidance == .turnOffData else { return }
                 if let service, !service.identifier.isEmpty, !service.authTag.isEmpty {
@@ -739,7 +735,7 @@ public final class RelocViewModel: ObservableObject {
         let onCellular = isWiFiSatisfied == false
         if onCellular {
             cellularGuidance = .turnOffData
-            cellularDiscoveryStatus = "请暂时关闭这台 iPhone 的蜂窝数据（保持代理 10.7.0.1 隧道连接）；正在检测这台 iPhone…"
+            cellularDiscoveryStatus = "请先关闭这台 iPhone 的蜂窝网络（保持代理 10.7.0.1 隧道连接）；正在检测这台 iPhone…"
             startCellularDiscoveryLoop(pairingData: data)
         } else {
             Task { @MainActor in
