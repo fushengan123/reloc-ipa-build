@@ -874,24 +874,20 @@ public final class RelocViewModel: ObservableObject {
         cellularGuidance = .none
         cellularDiscoveryStatus = ""
         session?.stop()
-        let stopIssued = systemSession?.stop() ?? false
+        systemSession?.stop()
         systemSession = nil
-        if locationMode == .system && !stopIssued {
-            // The live handle was already gone, so no cancel could reach the
-            // device. Say so instead of pretending the stop succeeded.
-            alertMessage = "系统定位会话已结束，停止指令没能发到设备。若位置仍停在模拟点，请重新开始定位后立刻点「停止并恢复」。"
-        }
         keepAlive.stop()
         coreLocation.stop()
         store.saveInterruptedSession(nil)
         interruptedSession = nil
 
-        // Both modes can leave the device holding an injected coordinate: NMEA
-        // injection persists in the location stack, and the system simulation
-        // only clears when the underlying DVT session is torn down. Cycling the
-        // Location Services master switch always restores the real GPS, so offer
-        // that path in either mode.
-        requestOpenLocationSettings = true
+        // Only accessory (NMEA) injection persists in the system location stack
+        // and needs the Location Services master switch cycled. System-level
+        // simulation is cancelled in place by the FFI, so it must not send the
+        // user into Settings.
+        if locationMode.requiresMFiCredential {
+            requestOpenLocationSettings = true
+        }
     }
 
     // MARK: - Pairing & Places Management
