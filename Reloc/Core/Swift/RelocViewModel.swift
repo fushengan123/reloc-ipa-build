@@ -787,27 +787,13 @@ public final class RelocViewModel: ObservableObject {
                     self.stopJitterTimer()
                     self.keepAlive.stop()
                     self.coreLocation.stop()
-                    // Try a cancel before dropping the handle: if the FFI session
-                    // is still alive this is the only chance to tell the device
-                    // to stop simulating.
-                    _ = self.systemSession?.stop()
+                    // One start = one session. Do not auto-restart here: churning
+                    // sessions leaves the device holding several simulations, and
+                    // the later stop only cancels the newest one — which is why
+                    // "停止并恢复" stopped taking effect.
                     self.systemSession = nil
-                    // The card must never branch into a second message: as long as
-                    // the location is not established the only card is
-                    // "turn mobile data off". So fall back to that state and
-                    // resume discovery instead of showing a separate
-                    // "session interrupted" panel on top of it.
-                    if let data = self.pendingSystemPairingData, self.systemSessionRestartCount < 2 {
-                        self.systemSessionRestartCount += 1
-                        // It had already worked once: reconnect quietly instead of
-                        // shoving a "turn data off" card at the user.
-                        self.cellularGuidance = .none
-                        self.cellularDiscoveryStatus = ""
-                        self.startCellularDiscoveryLoop(pairingData: data, silent: true)
-                    } else {
-                        self.cellularGuidance = .turnOffData
-                        self.cellularDiscoveryStatus = "定位模拟多次中断。请确认代理隧道与配对记录后，点「继续」重试。"
-                    }
+                    self.cellularGuidance = .turnOffData
+                    self.cellularDiscoveryStatus = "定位模拟已结束。请确认代理隧道与配对记录，然后点「继续」重试。"
                 }
             }
         )
